@@ -239,8 +239,12 @@ export function apply(ctx: ClientContext): void {
         const sidebarRight = ctx.sidebarRight
         if (sidebarRight === undefined) return
         if (typeof sidebarRight.openResource === 'function') {
-          sidebarRight.openResource(previewAddressOf(normalized))
-          return
+          try {
+            sidebarRight.openResource(previewAddressOf(normalized))
+            return
+          } catch {
+            // A host that refuses the address still gets the page in one tab.
+          }
         }
         sidebarRight.openTab(PREVIEW_TAB_KIND, { params: { url: normalized } })
       },
