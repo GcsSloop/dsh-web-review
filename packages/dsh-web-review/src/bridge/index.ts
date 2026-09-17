@@ -626,14 +626,14 @@ function execute(command: PreviewBridgeCommand): unknown {
   if (command.name === 'request-ready') { postReady(); return null }
   if (command.name === 'activate') {
     picking = true
-    document.documentElement.classList.add('dsh-wv-picking')
+    setPickingClass(true)
     return null
   }
   if (command.name === 'deactivate') {
     picking = false
     clearHover()
     clearSelection()
-    document.documentElement.classList.remove('dsh-wv-picking')
+    setPickingClass(false)
     return null
   }
   if (command.name === 'clear-selection') {
@@ -747,6 +747,40 @@ function execute(command: PreviewBridgeCommand): unknown {
   throw new Error('unsupported command')
 }
 
+/**
+ * Mount the picker's own stylesheet.
+ *
+ * This bridge is injected at **document start** — the shell's panel runs it as an
+ * initialization script and a CDP-driven page as an init script — where the
+ * parser has not created `<head>` (or even `<html>`) yet. Appending to a missing
+ * head threw, and that one throw took every picker listener after it with the
+ * exception, so the handshake and the command channel looked healthy while hover
+ * outlines and clicks silently did nothing. Mount as soon as a root exists.
+ */
+function mountPickerStyle(style: HTMLStyleElement): void {
+  const host = (): Element | null => document.head ?? document.documentElement
+  const current = host()
+  if (current !== null) {
+    current.appendChild(style)
+    return
+  }
+  const observer = new MutationObserver((): void => {
+    const target = host()
+    if (target === null) return
+    target.appendChild(style)
+    observer.disconnect()
+  })
+  observer.observe(document, { childList: true, subtree: true })
+}
+
+/** Mark the page as picking, when there is a root to mark yet. */
+function setPickingClass(picking: boolean): void {
+  const root = document.documentElement
+  if (root === null) return
+  if (picking) root.classList.add('dsh-wv-picking')
+  else root.classList.remove('dsh-wv-picking')
+}
+
 /** Execute one host command carried by either transport. */
 function receiveHostMessage(value: unknown): void {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return
@@ -784,7 +818,7 @@ function installPicker(): void {
   const style = document.createElement('style')
   style.dataset.dshWebReview = 'picker'
   style.textContent = PICKER_STYLE
-  document.head.appendChild(style)
+  mountPickerStyle(style)
   document.addEventListener('mouseover', (event) => {
     if (!picking || !(event.target instanceof Element) || event.target === document.documentElement
       || event.target === document.body || isChrome(event.target) || event.target === selected) return
