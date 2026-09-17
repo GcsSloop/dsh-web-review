@@ -11,13 +11,13 @@ import { rewriteIsolatedHtml } from '../src/rewrite.ts'
 import {
   PREVIEW_BRIDGE_PATH,
   PREVIEW_NAVIGATE_PREFIX,
-  PREVIEW_PROXY_PREFIX,
   type PreviewChannel,
 } from '../src/preview-contract.ts'
 
 const BASE = 'http://localhost:5173/app/page.html'
+const FRAME_ORIGIN = `http://${'b'.repeat(32)}.localhost:43123`
 const options = {
-  proxyPrefix: PREVIEW_PROXY_PREFIX,
+  frameOrigin: FRAME_ORIGIN,
   navigatePrefix: PREVIEW_NAVIGATE_PREFIX,
   bridgePath: PREVIEW_BRIDGE_PATH,
   channel: 'a'.repeat(32) as PreviewChannel,
@@ -57,29 +57,45 @@ describe('isolated preview URL codec', () => {
 })
 
 describe('rewriteIsolatedHtml', () => {
-  it('injects one decodable base, config, and bridge before page scripts', () => {
+  it('normalizes the frame address to the target path before page scripts', () => {
     const out = rewriteIsolatedHtml('<head><script src="app.js"></script></head>', BASE, options)
-    expect(out).toMatch(/<head><base [^>]+><script data-dsh-web-review="config">/u)
+    expect(out).toMatch(/<head><base [^>]+><script data-dsh-web-review="location">/u)
+    expect(out).toMatch(/data-dsh-web-review="location">[^<]*<\/script><script data-dsh-web-review="config">/u)
+    expect(out.indexOf('data-dsh-web-review="location"')).toBeLessThan(out.indexOf('src="app.js"'))
+    expect(out.indexOf('data-dsh-web-review="config"')).toBeLessThan(out.indexOf('src="app.js"'))
     expect(out.indexOf('data-dsh-web-review="bridge"')).toBeLessThan(out.indexOf('src="app.js"'))
     expect(out).toContain('http://127.0.0.1:3090')
     expect(out).toContain('a'.repeat(32))
+    expect(out).toContain('history.replaceState(null,\'\',"/app/page.html")')
     expect(out).not.toContain('/webview-proxy')
 
     const base = /<base href="([^"]+)"/u.exec(out)?.[1]
-    expect(base).toBeDefined()
-    const pathname = new URL(base!, 'http://session.localhost').pathname
-    expect(pathname.startsWith(PREVIEW_PROXY_PREFIX)).toBe(true)
-    expect(decodeTarget(pathname.slice(PREVIEW_PROXY_PREFIX.length))).toBe(BASE)
+    expect(base).toBe(`${FRAME_ORIGIN}/app/page.html`)
   })
 
-  it('keeps same-target resources isolated and routes cross-Origin navigation through handoff', () => {
+  it('carries the target search and hash into the normalized address', () => {
+    const out = rewriteIsolatedHtml(
+      '<head></head>',
+      'http://localhost:5173/app/page.html?tab=one#part',
+      options,
+    )
+    expect(out).toContain('history.replaceState(null,\'\',"/app/page.html?tab=one#part")')
+    const base = /<base href="([^"]+)"/u.exec(out)?.[1]
+    expect(base).toBe(`${FRAME_ORIGIN}/app/page.html?tab=one`)
+  })
+
+  it('keeps root-relative resources native and moves absolute same-target URLs onto the frame Origin', () => {
     const out = rewriteIsolatedHtml([
-      '<a href="/next">same</a>',
+      '<a href="/next">rooted</a>',
+      '<a href="http://localhost:5173/absolute">absolute</a>',
+      '<a href="//localhost:5173/protocol-relative">protocol relative</a>',
       '<a href="https://other.example/page">other</a>',
       '<form action="https://form.example/submit"></form>',
       '<script src="https://cdn.example/app.js"></script>',
     ].join(''), BASE, options)
-    expect(out).toContain(`href="${PREVIEW_PROXY_PREFIX}http%3A//localhost%3A5173/next"`)
+    expect(out).toContain('href="/next"')
+    expect(out).toContain(`href="${FRAME_ORIGIN}/absolute"`)
+    expect(out).toContain(`href="${FRAME_ORIGIN}/protocol-relative"`)
     expect(out).toContain(`href="${PREVIEW_NAVIGATE_PREFIX}https%3A//other.example/page"`)
     expect(out).toContain(`action="${PREVIEW_NAVIGATE_PREFIX}https%3A//form.example/submit"`)
     expect(out).toContain('src="https://cdn.example/app.js"')
@@ -100,14 +116,15 @@ describe('rewriteIsolatedHtml', () => {
     expect(out).toContain('src="data:image/png;base64,AAAA"')
   })
 
-  it('rewrites same-Origin srcset candidates while preserving descriptors and remote CORS', () => {
+  it('rewrites absolute same-Origin srcset candidates while preserving descriptors and remote CORS', () => {
     const out = rewriteIsolatedHtml(
-      '<img srcset="/a.png 1x, https://cdn.example/b.png 2x">',
+      `<img srcset="http://localhost:5173/a.png 1x, /b.png 2x, https://cdn.example/c.png 3x">`,
       BASE,
       options,
     )
-    expect(out).toContain(`${PREVIEW_PROXY_PREFIX}http%3A//localhost%3A5173/a.png 1x`)
-    expect(out).toContain('https://cdn.example/b.png 2x')
+    expect(out).toContain(`${FRAME_ORIGIN}/a.png 1x`)
+    expect(out).toContain('/b.png 2x')
+    expect(out).toContain('https://cdn.example/c.png 3x')
   })
 
   it('removes page CSP/refresh directives without rewriting script text or comments', () => {

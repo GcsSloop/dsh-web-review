@@ -30,7 +30,6 @@ import {
   PREVIEW_CLIENT_HEADER,
   PREVIEW_CLIENT_HEADER_VALUE,
   PREVIEW_NAVIGATE_PREFIX,
-  PREVIEW_PROXY_PREFIX,
   PREVIEW_SESSIONS_PATH,
   previewSessionDescriptorOf,
   type PreviewSessionDescriptor,
@@ -59,8 +58,22 @@ beforeAll(async () => {
     const url = new URL(req.url ?? '/', 'http://target.test')
     res.setHeader('x-frame-options', 'DENY')
     res.setHeader('content-security-policy', "default-src 'none'")
-    res.setHeader('set-cookie', 'preview-secret=must-not-reach-host')
+    res.setHeader('set-cookie', 'preview-secret=must-not-reach-host; Path=/; Domain=target.test; Secure; HttpOnly')
     res.setHeader('clear-site-data', '"cookies"')
+    if (url.pathname === '/login' && req.method === 'POST') {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'set-cookie': 'session=ok; Path=/; HttpOnly; Domain=target.test',
+      })
+      res.end('{"ok":true}')
+      return
+    }
+    if (url.pathname === '/dashboard') {
+      const authed = (req.headers.cookie ?? '').includes('session=ok')
+      res.writeHead(authed ? 200 : 401, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end(authed ? 'dashboard' : 'unauthorized')
+      return
+    }
     if (url.pathname === '/redirect') {
       res.writeHead(302, { location: '/nested/page.html' })
       res.end()
@@ -142,13 +155,20 @@ afterAll(async () => {
 })
 
 /** Boot a test cordis.yml (webserver + dsh-web-review) through the real Loader. */
-async function loadComposition(): Promise<Context> {
+async function loadComposition(pluginConfig?: Record<string, unknown>): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-web-review-loader-'))
   const dist = join(root, 'dist')
   await mkdir(dist)
   const distIndex = join(dist, 'index.html')
   await writeFile(distIndex, '<head></head><body>shell</body>')
   const configPath = join(root, 'cordis.yml')
+  const pluginRow = pluginConfig === undefined
+    ? ["- name: 'dsh-web-review-test'"]
+    : [
+      "- name: 'dsh-web-review-test'",
+      '  config:',
+      ...Object.entries(pluginConfig).map(([key, value]) => `    ${key}: ${JSON.stringify(value)}`),
+    ]
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-agent'",
     '',
@@ -162,7 +182,7 @@ async function loadComposition(): Promise<Context> {
     '    port: 0',
     `    distIndex: '${distIndex}'`,
     '',
-    "- name: 'dsh-web-review-test'",
+    ...pluginRow,
     '',
   ].join('\n'))
 
@@ -268,21 +288,63 @@ describe('isolated preview Origin (real Loader + webserver composition)', () => 
     expect(response.headers.get('x-frame-options')).toBeNull()
     expect(response.headers.get('content-security-policy'))
       .toBe(`frame-ancestors http://127.0.0.1:${String(port)}`)
-    expect(response.headers.get('set-cookie')).toBeNull()
     expect(response.headers.get('clear-site-data')).toBeNull()
+    // Upstream cookies reach the isolated frame Origin only, without host/transport scope.
+    expect(response.headers.getSetCookie())
+      .toEqual(['preview-secret=must-not-reach-host; Path=/; HttpOnly'])
     const body = await response.text()
-    const baseHref = `${PREVIEW_PROXY_PREFIX}http%3A//127.0.0.1%3A${new URL(fixtureUrl).port}/`
-    const base = `<base href="${baseHref}">`
-    expect(body).toContain(base)
+    const baseHref = `${descriptor.frameOrigin}/`
+    expect(body).toContain(`<base href="${baseHref}">`)
+    expect(body).toContain(`history.replaceState(null,'',"/")`)
+    expect(body.indexOf('data-dsh-web-review="location"')).toBeLessThan(body.indexOf('<link'))
     expect(body.indexOf('data-dsh-web-review="config"')).toBeLessThan(body.indexOf('<link'))
     expect(body.indexOf('data-dsh-web-review="bridge"')).toBeLessThan(body.indexOf('<link'))
     expect(body).toContain(`href="${PREVIEW_NAVIGATE_PREFIX}http%3A//target.test/page2.html"`)
-    expect(body).toContain(`href="${PREVIEW_PROXY_PREFIX}http%3A//127.0.0.1%3A${new URL(fixtureUrl).port}/rooted.html"`)
+    expect(body).toContain('href="/rooted.html"')
     expect(body).toContain('src="img.png"')
     expect(body).toContain(`action="${PREVIEW_NAVIGATE_PREFIX}http%3A//target.test/submit"`)
-    const stylesheet = await fetch(new URL('style.css', new URL(baseHref, descriptor.frameOrigin)))
+    const stylesheet = await fetch(new URL('style.css', baseHref))
     expect(stylesheet.status).toBe(200)
     expect(await stylesheet.text()).toBe('body { color: rebeccapurple; }\n')
+  })
+
+  it('normalizes the frame address to the target path for framework routers', async () => {
+    await loadComposition()
+    const descriptor = await createPreview(`${fixtureUrl}/nested/page.html?tab=one#part`)
+    const body = await (await fetch(descriptor.frameUrl)).text()
+    expect(body).toContain(`history.replaceState(null,'',"/nested/page.html?tab=one#part")`)
+    expect(body).toContain(`<base href="${descriptor.frameOrigin}/nested/page.html?tab=one">`)
+  })
+
+  it('carries target-Origin cookies so a login-gated page renders after login', async () => {
+    await loadComposition()
+    const descriptor = await createPreview(`${fixtureUrl}/dashboard`)
+    expect((await fetch(descriptor.frameUrl)).status).toBe(401)
+
+    const login = await fetch(`${descriptor.frameOrigin}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'user=admin&password=secret',
+    })
+    expect(login.status).toBe(200)
+    expect(login.headers.getSetCookie()).toEqual(['session=ok; Path=/; HttpOnly'])
+
+    const authed = await fetch(descriptor.frameUrl)
+    expect(authed.status).toBe(200)
+    expect(await authed.text()).toBe('dashboard')
+  })
+
+  it('leaves target cookies out of the transport when the deployment disables them', async () => {
+    await loadComposition({ previewCookies: false })
+    const descriptor = await createPreview(`${fixtureUrl}/dashboard`)
+    const login = await fetch(`${descriptor.frameOrigin}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'user=admin&password=secret',
+    })
+    expect(login.status).toBe(200)
+    expect(login.headers.getSetCookie()).toEqual([])
+    expect((await fetch(descriptor.frameUrl)).status).toBe(401)
   })
 
   it('passes non-HTML through unchanged', async () => {
@@ -318,12 +380,11 @@ describe('isolated preview Origin (real Loader + webserver composition)', () => 
 
   it('uses the final redirect URL as the document base', async () => {
     await loadComposition()
-    const fixturePort = String(new URL(fixtureUrl).port)
-    const response = await fetch((await createPreview(fixtureUrl + '/redirect')).frameUrl)
+    const descriptor = await createPreview(fixtureUrl + '/redirect')
+    const response = await fetch(descriptor.frameUrl)
     const body = await response.text()
-    expect(body).toContain(
-      `<base href="${PREVIEW_PROXY_PREFIX}http%3A//127.0.0.1%3A${fixturePort}/nested/page.html">`,
-    )
+    expect(body).toContain(`<base href="${descriptor.frameOrigin}/nested/page.html">`)
+    expect(body).toContain(`history.replaceState(null,'',"/nested/page.html")`)
     expect(body).toContain('src="asset.png"')
   })
 

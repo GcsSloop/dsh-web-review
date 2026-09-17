@@ -56,7 +56,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   let previewServer: IsolatedPreviewServer | undefined
   await ctx.effect(async () => {
     const bridgeSource = await readBridgeSource()
-    previewServer = await startIsolatedPreviewServer(bridgeSource)
+    previewServer = await startIsolatedPreviewServer(bridgeSource, { cookies: config.previewCookies })
     ctx.logger.info(`isolated preview server listening on 127.0.0.1:${String(previewServer.port)}`)
     return async () => { await previewServer?.close() }
   }, 'dsh-web-review: isolated preview server')

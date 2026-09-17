@@ -23,6 +23,7 @@ import {
   type PreviewSessionId,
 } from './preview-contract.ts'
 import { decodeTarget, encodeTarget, isPreviewableUrl } from './proxy-url.ts'
+import { PreviewCookieJar, relayedPreviewCookie } from './preview-cookies.ts'
 import {
   BodyLimitError,
   decodeHtml,
@@ -64,6 +65,21 @@ export interface IsolatedPreviewServer {
   releaseSessions: (ids: readonly PreviewSessionId[]) => void
   close: () => Promise<void>
   port: number
+}
+
+/** Transport options that are not part of the session contract. */
+export interface IsolatedPreviewServerOptions {
+  /**
+   * Carry target-Origin cookies through the transport so login-gated pages can
+   * render. Cookies stay bound to their target Origin and never reach the DSH
+   * host Origin.
+   */
+  cookies?: boolean
+}
+
+interface PreviewCookieContext {
+  jar: PreviewCookieJar
+  frameCookie: string | undefined
 }
 
 function opaqueId(): string {
@@ -146,6 +162,7 @@ async function fetchPreview(
     body?: Uint8Array<ArrayBuffer>
     headers: Record<string, string>
     signal: AbortSignal
+    cookie?: PreviewCookieContext
   },
 ): Promise<PreviewFetchResult> {
   let current = target
@@ -154,12 +171,20 @@ async function fetchPreview(
   let headers = new Headers(options.headers)
   const boundOrigin = new URL(target).origin
   for (let redirects = 0; ; redirects += 1) {
+    const hopHeaders = new Headers(headers)
+    const jar = options.cookie?.jar
+    if (jar !== undefined) {
+      const cookieHeader = jar.headerFor(new URL(current).origin, current, options.cookie?.frameCookie)
+      if (cookieHeader === undefined) hopHeaders.delete('cookie')
+      else hopHeaders.set('cookie', cookieHeader)
+    }
     const response = await pinnedRequest(session, current, {
       method,
       signal: options.signal,
-      headers,
+      headers: hopHeaders,
       ...(body === undefined ? {} : { body }),
     })
+    jar?.store(new URL(current).origin, response.headers.getSetCookie())
     const location = response.headers.get('location')
     if (!REDIRECT_STATUSES.has(response.status) || location === null) {
       return { response, target: current }
@@ -265,7 +290,10 @@ async function pinnedRequest(
   throw new Error('preview target connection failed', { cause: failure })
 }
 
-function noStoreHeaders(extra: Record<string, string> = {}): Record<string, string> {
+/** Response headers this transport writes, including multi-valued cookies. */
+type PreviewResponseHeaders = Record<string, string | string[]>
+
+function noStoreHeaders(extra: PreviewResponseHeaders = {}): PreviewResponseHeaders {
   return {
     'cache-control': 'no-store',
     'referrer-policy': 'no-referrer',
@@ -273,10 +301,19 @@ function noStoreHeaders(extra: Record<string, string> = {}): Record<string, stri
   }
 }
 
-/** Start the independent loopback listener after the bridge artifact is built. */
-export async function startIsolatedPreviewServer(bridgeSource: string): Promise<IsolatedPreviewServer> {
+/**
+ * Start the independent loopback listener after the bridge artifact is built.
+ * @param bridgeSource - compiled bridge artifact served into every frame.
+ * @param options - transport options such as target-cookie carriage.
+ */
+export async function startIsolatedPreviewServer(
+  bridgeSource: string,
+  options: IsolatedPreviewServerOptions = {},
+): Promise<IsolatedPreviewServer> {
   const sessions = new Map<PreviewSessionId, PreviewSession>()
   const sockets = new Set<Socket>()
+  const jar = new PreviewCookieJar()
+  const cookiesEnabled = options.cookies ?? true
   let port = 0
 
   const createSession = (
@@ -412,12 +449,19 @@ export async function startIsolatedPreviewServer(bridgeSource: string): Promise<
     const abort = (): void => { disconnected.abort(new Error('preview client disconnected')) }
     req.once('aborted', abort)
     res.once('close', abort)
+    const cookie: PreviewCookieContext | undefined = cookiesEnabled
+      ? {
+          jar,
+          frameCookie: typeof req.headers.cookie === 'string' ? req.headers.cookie : undefined,
+        }
+      : undefined
     try {
       const result = await fetchPreview(session, target, {
         method,
         signal: AbortSignal.any([AbortSignal.timeout(15_000), disconnected.signal]),
         headers: requestHeaders(req),
         ...(body === undefined ? {} : { body: new Uint8Array(body) }),
+        ...(cookie === undefined ? {} : { cookie }),
       })
       if (result.handoff !== undefined) {
         if (session.handoffs >= MAX_HANDOFFS_PER_SESSION
@@ -441,9 +485,16 @@ export async function startIsolatedPreviewServer(bridgeSource: string): Promise<
       const headers = sanitizedResponseHeaders(upstream.headers)
       const contentType = upstream.headers.get('content-type') ?? ''
       const html = isHtmlContentType(contentType)
+      const relayed = cookie === undefined
+        ? []
+        : upstream.headers.getSetCookie()
+            .map(value => relayedPreviewCookie(value))
+            .filter((value): value is string => value !== undefined)
+      const relayHeaders: PreviewResponseHeaders = relayed.length === 0 ? {} : { 'set-cookie': relayed }
       if (method === 'HEAD') {
         res.writeHead(upstream.status, noStoreHeaders({
           ...headers,
+          ...relayHeaders,
           ...(html ? {
             'content-security-policy': `frame-ancestors ${session.parentOrigin}`,
             'x-content-type-options': 'nosniff',
@@ -455,6 +506,7 @@ export async function startIsolatedPreviewServer(bridgeSource: string): Promise<
       const payload = await readResponseBytes(upstream, 10 * 1024 * 1024)
       res.writeHead(upstream.status, noStoreHeaders({
         ...headers,
+        ...relayHeaders,
         ...(html ? {
           'content-type': 'text/html; charset=utf-8',
           'content-security-policy': `frame-ancestors ${session.parentOrigin}`,
@@ -463,7 +515,7 @@ export async function startIsolatedPreviewServer(bridgeSource: string): Promise<
       }))
       res.end(html
         ? rewriteIsolatedHtml(decodeHtml(payload, contentType), result.target, {
-            proxyPrefix: PREVIEW_PROXY_PREFIX,
+            frameOrigin: sessionOrigin(session.id, port),
             navigatePrefix: PREVIEW_NAVIGATE_PREFIX,
             bridgePath: PREVIEW_BRIDGE_PATH,
             channel: session.channel,
@@ -522,6 +574,7 @@ export async function startIsolatedPreviewServer(bridgeSource: string): Promise<
         for (const socket of sockets) socket.destroy()
       })
       sessions.clear()
+      jar.clear()
     },
   }
 }

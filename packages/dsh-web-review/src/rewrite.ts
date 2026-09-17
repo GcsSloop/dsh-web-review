@@ -29,13 +29,23 @@ function isRemovedMetaDirective(node: Node): boolean {
 
 /** Paths and routing identity owned by one isolated preview origin. */
 export interface IsolatedRewriteOptions {
-  proxyPrefix: string
+  /** Absolute origin the frame is served from, e.g. `http://<session>.localhost:<port>`. */
+  frameOrigin: string
   navigatePrefix: string
   bridgePath: string
   channel: PreviewChannel
   parentOrigin: string
 }
 
+/**
+ * Rewrite one URL attribute value for the isolated Origin.
+ *
+ * Root-relative values resolve natively against the preview Origin and stay
+ * untouched, so page-visible paths and framework routers keep the target's own
+ * paths. Absolute same-target values must move onto the preview Origin, and
+ * cross-Origin navigation goes through the handoff route; cross-Origin
+ * subresources keep their browser-native CORS behavior.
+ */
 function isolatedUrlValue(
   value: string,
   base: string,
@@ -44,16 +54,18 @@ function isolatedUrlValue(
 ): string {
   if (value === '') return value
   const candidate = value.trim()
-  if (!candidate.startsWith('/') && !isHttpUrl(candidate)) return value
+  const protocolRelative = candidate.startsWith('//')
+  if (!protocolRelative && !candidate.startsWith('/') && !isHttpUrl(candidate)) return value
+  if (!protocolRelative && !isHttpUrl(candidate)) return value
   try {
     const resolved = new URL(candidate, base)
     if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return value
-    const route = resolved.origin === new URL(base).origin
-      ? options.proxyPrefix
-      : attribute === 'href' || attribute === 'action'
-        ? options.navigatePrefix
-        : undefined
-    return route === undefined ? value : proxyUrl(resolved.href, route)
+    if (resolved.origin === new URL(base).origin) {
+      return new URL(`${resolved.pathname}${resolved.search}${resolved.hash}`, options.frameOrigin).href
+    }
+    return attribute === 'href' || attribute === 'action'
+      ? proxyUrl(resolved.href, options.navigatePrefix)
+      : value
   } catch {
     return value
   }
@@ -118,34 +130,42 @@ function scriptElement(attributes: Record<string, string>, source = ''): Element
 
 /**
  * Rewrite one document for a dedicated preview origin and inject the bridge
- * before page-authored scripts. Same-target-origin resources stay on the
- * isolated proxy; cross-origin navigations go through an origin handoff.
+ * before page-authored scripts. The frame's address is normalized to the
+ * target's own path so `location`, framework routers, and page-visible URLs
+ * match the original page; only cross-Origin navigation keeps a route prefix.
  */
 export function rewriteIsolatedHtml(
   html: string,
   targetUrl: string,
   options: IsolatedRewriteOptions,
 ): string {
-  const target = new URL(targetUrl).href
+  const target = new URL(targetUrl)
+  const absoluteTarget = target.href
   const document = parse(html)
-  rewriteIsolatedTree(document, target, options)
+  rewriteIsolatedTree(document, absoluteTarget, options)
   const head = findElement(document, 'head')
   if (head === undefined) throw new Error('parsed HTML document has no head element')
-  const base = baseElement(proxyUrl(target, options.proxyPrefix))
+  const pagePath = `${target.pathname}${target.search}${target.hash}`
+  const base = baseElement(new URL(`${target.pathname}${target.search}`, options.frameOrigin).href)
+  const location = scriptElement(
+    { 'data-dsh-web-review': 'location' },
+    'try{history.replaceState(null,\'\','
+    + `${JSON.stringify(pagePath).replaceAll('<', '\\u003c')})}catch(error){}`,
+  )
   const configSource = `window.__DSH_WEB_REVIEW_BRIDGE_CONFIG__=Object.freeze(${JSON.stringify({
     protocol: 'dsh-web-review/bridge',
     version: 1,
     channel: options.channel,
     parentOrigin: options.parentOrigin,
-    pageUrl: target,
-    targetOrigin: new URL(target).origin,
+    pageUrl: absoluteTarget,
+    targetOrigin: new URL(absoluteTarget).origin,
   }).replaceAll('<', '\\u003c')});`
   const config = scriptElement({ 'data-dsh-web-review': 'config' }, configSource)
   const bridge = scriptElement({
     src: options.bridgePath,
     'data-dsh-web-review': 'bridge',
   })
-  for (const child of [base, config, bridge]) child.parentNode = head
-  head.childNodes.unshift(base, config, bridge)
+  for (const child of [base, location, config, bridge]) child.parentNode = head
+  head.childNodes.unshift(base, location, config, bridge)
   return serialize(document)
 }

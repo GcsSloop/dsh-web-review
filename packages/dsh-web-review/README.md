@@ -176,12 +176,18 @@ capsule visible for retry.
 - Page URL/title, selectors, DOM snapshots, and framework anchors remain
   explicitly untrusted page evidence. The bridge isolates DSH capabilities; it
   does not turn page-authored metadata into authenticated facts.
-- The server-side proxy carries no browser cookies. Login-gated pages and sites
-  that require their original browser Origin, client certificates, or anti-bot
-  challenges may not render completely.
-- Root-relative and plain-relative script requests use the isolated proxy.
-  Absolute URLs embedded inside page JavaScript and WebSocket endpoints are not
-  rewritten; dev-server HMR WebSockets do not survive the proxy.
+- **Target cookies:** `previewCookies` (default on) carries cookies for the
+  session's target Origin, so login-gated pages can be signed in from inside
+  Preview. Cookies are captured per target Origin, replayed upstream, and never
+  shared with the DSH host Origin or another target; `set-cookie` reaches the
+  frame without its `Domain`/`Secure` attributes. Pages that require their
+  original browser Origin, client certificates, or anti-bot challenges may still
+  not render completely.
+- **Native page paths:** the frame's address is normalized to the target's own
+  path and query, and root-relative and plain-relative URLs resolve through the
+  isolated Origin. Absolute URLs hardcoded inside page JavaScript and WebSocket
+  endpoints are not rewritten; dev-server HMR WebSockets do not survive the
+  proxy.
 - Rewritten static links and server redirects perform a controlled Origin
   handoff. Dynamically created links or programmatic navigation that assigns a
   cross-Origin `location` directly can leave the bridge, after which Preview

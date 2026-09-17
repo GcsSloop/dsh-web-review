@@ -19,10 +19,15 @@ import {
 const PROVIDER_NAME = 'dsh-web-review-ui'
 const UPSTREAM_COMMIT = 'd01493b0a7b976a74bfcedc80c783d60c7995910'
 
-/** Deployment-controlled model visibility for the bundled UI optimization Skills. */
+/** Deployment configuration for this plugin. */
 export interface Config {
   /** Skills advertised to the model-facing catalog; every bundled Skill remains user-invocable. */
   autoLoadSkills: UiSkillName[]
+  /**
+   * Carry target-Origin cookies through the isolated preview transport so
+   * login-gated pages can render. Cookies stay bound to their target Origin.
+   */
+  previewCookies: boolean
 }
 
 const uiSkillName = z.union([
@@ -40,6 +45,7 @@ const uiSkillName = z.union([
 export const Config: Schema<Config> = z.object({
   autoLoadSkills: z.array(uiSkillName)
     .default([...DEFAULT_AUTO_LOAD_SKILLS]),
+  previewCookies: z.boolean().default(true),
 })
 
 function skillDirectory(name: UiSkillName): URL {
