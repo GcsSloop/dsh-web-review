@@ -389,6 +389,15 @@ export function PreviewTabBody({
   const [descriptor, setDescriptor] = useState<PreviewSessionDescriptor | null>(
     loadedPageUrl.current === null ? null : mountedSession?.descriptor ?? null,
   )
+  /**
+   * The address the current session was created for.
+   *
+   * `localUrl` is the tab's target; `loadedPageUrl` is whatever the page reports
+   * (a login redirect moves it). Session creation keys on `localUrl` alone, so a
+   * redirect must never touch it — otherwise the two race and the pane recreates
+   * its session forever, flickering on "starting preview".
+   */
+  const targetRef = useRef('')
   /** The session the live surface belongs to; stale surfaces are ignored. */
   const activeSessionRef = useRef<string | null>(null)
   /**
@@ -483,8 +492,8 @@ export function PreviewTabBody({
     if (recoveredSessions.current.has(sessionId)) return
     recoveredSessions.current.add(sessionId)
     if (tabSessions.get(tabKey)?.descriptor.sessionId === sessionId) tabSessions.delete(tabKey)
-    // Clearing this is what lets the creation effect run again: the address is
-    // unchanged, so the guard would otherwise treat the dead session as current.
+    // Clearing the target is what lets the creation effect run again.
+    targetRef.current = ''
     loadedPageUrl.current = null
     setDescriptor(null)
     setPreviewRequestRevision(value => value + 1)
@@ -610,7 +619,7 @@ export function PreviewTabBody({
   // own; a visible tab without one adopts that request. A tab already showing a
   // page keeps it, so one preview never steals another's address.
   useEffect(() => {
-    if (!tabVisible || state.url === '' || loadedPageUrl.current !== null || localUrl !== '') return
+    if (!tabVisible || state.url === '' || localUrl !== '') return
     const normalized = normalizePreviewUrl(state.url)
     if (normalized === undefined) return
     setLocalUrl(normalized)
@@ -623,7 +632,7 @@ export function PreviewTabBody({
   useEffect(() => {
     if (requestedUrl === '') return
     const normalized = normalizePreviewUrl(requestedUrl)
-    if (normalized === undefined || normalized === loadedPageUrl.current) return
+    if (normalized === undefined || normalized === localUrl) return
     setLocalUrl(normalized)
     // Only the tab the user is looking at describes the session; a hidden tab
     // prepares its address and opens the session when it is shown.
@@ -639,18 +648,19 @@ export function PreviewTabBody({
   // bounds while the tab is hidden, which is what keeps one preview from
   // fighting another for the shell's single panel.
   useEffect(() => {
-    if (localUrl === loadedPageUrl.current) return
+    if (localUrl === targetRef.current) return
     sessionRequest.current += 1
     const request = sessionRequest.current
     setPickerReady(false)
     setHistoryState({ canGoBack: false, canGoForward: false })
     setDescriptor(null)
     if (localUrl === '') {
+      targetRef.current = ''
       loadedPageUrl.current = null
       setLoading(false)
       return
     }
-    loadedPageUrl.current = localUrl
+    targetRef.current = localUrl
     const mode = preferredMode
     const attemptKey = `${localUrl}|${String(previewRequestRevision)}`
     if (attemptsRef.current.key !== attemptKey) attemptsRef.current = { key: attemptKey, count: 0 }
@@ -686,12 +696,14 @@ export function PreviewTabBody({
       const timedOut = (thrown as { timedOut?: boolean }).timedOut === true
       if (status === 503 || timedOut) {
         // native -> browser -> proxy, one step per unavailable transport. The
-        // address must be released here or the re-run this triggers would return
+        // target must be released here or the re-run this triggers would return
         // early and the pane would sit on "starting preview" forever.
+        targetRef.current = ''
         loadedPageUrl.current = null
         if (mode === 'native') { setPreferredMode('browser'); setErrorDetail('native unavailable → browser'); return }
         if (mode === 'browser') { setPreferredMode('proxy'); setErrorDetail('browser unavailable → proxy'); return }
       }
+      targetRef.current = ''
       loadedPageUrl.current = null
       const detail = `${mode} ${timedOut ? 'timed out' : String(status ?? 'failed')}`
       setErrorDetail(detail)
@@ -713,7 +725,6 @@ export function PreviewTabBody({
         setPickerReady(true)
         setHistoryState({ canGoBack: ready.canGoBack, canGoForward: ready.canGoForward })
         loadedPageUrl.current = ready.pageUrl
-        setLocalUrl(ready.pageUrl)
         setDraft(ready.pageUrl)
         // Only the tab the user is looking at describes the session: another
         // preview tab's page must not rewrite the dock's context.
@@ -760,7 +771,7 @@ export function PreviewTabBody({
           if (activeSessionRef.current !== descriptor.sessionId) return
           setHistoryState({ canGoBack: false, canGoForward: false })
           loadedPageUrl.current = nativeState.url
-          if (nativeState.url !== '') { setLocalUrl(nativeState.url); setDraft(nativeState.url) }
+          if (nativeState.url !== '') setDraft(nativeState.url)
           if (tabVisibleRef.current) {
             actionsRef.current.setTitle(nativeState.title)
             if (stateRef.current.url !== nativeState.url) actionsRef.current.setUrl(nativeState.url)
@@ -799,7 +810,7 @@ export function PreviewTabBody({
           // follows the page without a bridge hop.
           setHistoryState({ canGoBack: false, canGoForward: false })
           loadedPageUrl.current = browserState.url
-          if (browserState.url !== '') { setLocalUrl(browserState.url); setDraft(browserState.url) }
+          if (browserState.url !== '') setDraft(browserState.url)
           if (tabVisibleRef.current) {
             actionsRef.current.setTitle(browserState.title)
             if (stateRef.current.url !== browserState.url) actionsRef.current.setUrl(browserState.url)
@@ -867,7 +878,7 @@ export function PreviewTabBody({
       picksOwnerTab = tabKey
       actionsRef.current.setPicks(tabPicks.get(tabKey) ?? [])
       // The dock must describe the page this tab shows, not the one it replaced.
-      const pageUrl = localUrl !== '' ? localUrl : loadedPageUrl.current
+      const pageUrl = loadedPageUrl.current ?? (localUrl !== '' ? localUrl : null)
       if (pageUrl !== null && pageUrl !== '' && stateRef.current.url !== pageUrl) {
         actionsRef.current.setUrl(pageUrl)
       }
@@ -933,7 +944,7 @@ export function PreviewTabBody({
       actions.setError(t('panel.urlInvalid'))
       return
     }
-    if (normalized === loadedPageUrl.current) {
+    if (normalized === targetRef.current) {
       // The same address is a reload, not a new session.
       bridgeRef.current?.reload()
       return
