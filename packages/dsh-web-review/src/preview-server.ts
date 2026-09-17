@@ -118,6 +118,7 @@ function descriptorOf(session: PreviewSession, port: number): PreviewSessionDesc
   const frameOrigin = sessionOrigin(session.id, port)
   return {
     sessionId: session.id,
+    mode: 'proxy',
     frameOrigin,
     frameUrl: `${frameOrigin}${PREVIEW_ENTRY_PREFIX}${encodeTarget(session.initialTarget)}`,
     targetOrigin: session.targetOrigin,

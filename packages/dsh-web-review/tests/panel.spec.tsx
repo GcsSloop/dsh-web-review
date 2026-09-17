@@ -290,6 +290,7 @@ function renderView(
       sessionId,
       channel,
       frameOrigin,
+      mode: 'proxy' as const,
       frameUrl: `${frameOrigin}${PREVIEW_ENTRY_PREFIX}${encodeTarget(target)}`,
       targetOrigin: new URL(target).origin,
     }

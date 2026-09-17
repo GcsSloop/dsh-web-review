@@ -90,6 +90,10 @@ export const PREVIEW_BRIDGE_PATH = `${PREVIEW_RESERVED_PREFIX}/bridge.js`
 export const PREVIEW_ENTRY_PREFIX = `${PREVIEW_RESERVED_PREFIX}/entry/`
 export const PREVIEW_PROXY_PREFIX = `${PREVIEW_RESERVED_PREFIX}/proxy/`
 export const PREVIEW_NAVIGATE_PREFIX = `${PREVIEW_RESERVED_PREFIX}/navigate/`
+/** Server-sent frame/state stream of one browser-backed preview session. */
+export const PREVIEW_BROWSER_STREAM_PATH = '/webview-browser-stream'
+/** Input and command channel of one browser-backed preview session. */
+export const PREVIEW_BROWSER_INPUT_PATH = '/webview-browser-input'
 
 declare const previewSessionIdBrand: unique symbol
 declare const previewChannelBrand: unique symbol
@@ -99,8 +103,16 @@ export type PreviewSessionId = string & { readonly [previewSessionIdBrand]: true
 export type PreviewChannel = string & { readonly [previewChannelBrand]: true }
 export type PreviewElementHandle = string & { readonly [previewElementHandleBrand]: true }
 
+/**
+ * `proxy` renders the target through the isolated loopback HTTP proxy;
+ * `browser` drives a real Chromium page, so the page keeps its true Origin,
+ * cookies, service workers, and WebSockets.
+ */
+export type PreviewSessionMode = 'proxy' | 'browser'
+
 export interface PreviewSessionDescriptor {
   sessionId: PreviewSessionId
+  mode: PreviewSessionMode
   frameUrl: string
   frameOrigin: string
   /** Server-bound target Origin used to reject page-forged address changes. */
@@ -274,28 +286,213 @@ function elementHandleOf(value: unknown): PreviewElementHandle | undefined {
 export function previewSessionDescriptorOf(value: unknown): PreviewSessionDescriptor | undefined {
   const record = recordOf(value)
   if (record === undefined || !exactKeys(record, [
-    'sessionId', 'frameUrl', 'frameOrigin', 'targetOrigin', 'channel',
+    'sessionId', 'mode', 'frameUrl', 'frameOrigin', 'targetOrigin', 'channel',
   ])) return undefined
   const sessionId = sessionIdOf(record.sessionId)
   const channel = channelOf(record.channel)
+  const mode = record.mode === 'proxy' || record.mode === 'browser' ? record.mode : undefined
   const frameUrl = boundedString(record.frameUrl, 32_768, false)
   const frameOrigin = boundedString(record.frameOrigin, 2_048, false)
   const targetOrigin = boundedString(record.targetOrigin, 2_048, false)
-  if (sessionId === undefined || channel === undefined || frameUrl === undefined
+  if (sessionId === undefined || channel === undefined || mode === undefined || frameUrl === undefined
     || frameOrigin === undefined || targetOrigin === undefined) return undefined
   try {
+    if (new URL(targetOrigin).origin !== targetOrigin) return undefined
     const url = new URL(frameUrl)
-    const target = new URL(decodeTarget(url.pathname.slice(PREVIEW_ENTRY_PREFIX.length)))
-    if (url.protocol !== 'http:' || url.origin !== frameOrigin
-      || url.hostname !== `${sessionId}.localhost`
-      || !url.pathname.startsWith(PREVIEW_ENTRY_PREFIX)
-      || url.username !== '' || url.password !== ''
-      || !isPreviewableUrl(target.href) || target.origin !== targetOrigin
-      || new URL(targetOrigin).origin !== targetOrigin) return undefined
+    if (url.username !== '' || url.password !== '') return undefined
+    if (mode === 'browser') {
+      // A browser session serves nothing itself: `frameUrl` is the live page
+      // address and `frameOrigin` is the DSH host Origin that owns the stream.
+      if (!isPreviewableUrl(url.href) || url.origin !== targetOrigin) return undefined
+      if (new URL(frameOrigin).origin !== frameOrigin) return undefined
+    } else {
+      const target = new URL(decodeTarget(url.pathname.slice(PREVIEW_ENTRY_PREFIX.length)))
+      if (url.protocol !== 'http:' || url.origin !== frameOrigin
+        || url.hostname !== `${sessionId}.localhost`
+        || !url.pathname.startsWith(PREVIEW_ENTRY_PREFIX)
+        || !isPreviewableUrl(target.href) || target.origin !== targetOrigin) return undefined
+    }
   } catch {
     return undefined
   }
-  return { sessionId, frameUrl, frameOrigin, targetOrigin, channel }
+  return { sessionId, mode, frameUrl, frameOrigin, targetOrigin, channel }
+}
+
+/** Bounds for the browser input/command channel. */
+export const PREVIEW_BROWSER_LIMITS = {
+  text: 4_000,
+  url: 4_096,
+  coordinate: 200_000,
+  delta: 40_000,
+} as const
+
+/** One pointer event forwarded into the browser page. */
+export interface PreviewBrowserMouseInput {
+  kind: 'mouse'
+  type: 'move' | 'down' | 'up'
+  x: number
+  y: number
+  button: 'left' | 'right' | 'middle'
+  clickCount: number
+  modifiers: number
+}
+
+/** One wheel event forwarded into the browser page. */
+export interface PreviewBrowserWheelInput {
+  kind: 'wheel'
+  x: number
+  y: number
+  deltaX: number
+  deltaY: number
+  modifiers: number
+}
+
+/** One keyboard event forwarded into the browser page. */
+export interface PreviewBrowserKeyInput {
+  kind: 'key'
+  type: 'down' | 'up' | 'char'
+  key: string
+  code: string
+  text: string
+  windowsVirtualKeyCode: number
+  modifiers: number
+}
+
+/** Inserted text, used instead of per-character keys for IME-safe input. */
+export interface PreviewBrowserTextInput {
+  kind: 'text'
+  text: string
+}
+
+/** Resize the emulated viewport to the panel surface. */
+export interface PreviewBrowserViewportInput {
+  kind: 'viewport'
+  width: number
+  height: number
+  deviceScaleFactor: number
+}
+
+export type PreviewBrowserInput =
+  | PreviewBrowserMouseInput
+  | PreviewBrowserWheelInput
+  | PreviewBrowserKeyInput
+  | PreviewBrowserTextInput
+  | PreviewBrowserViewportInput
+
+/** Commands the panel can issue against one browser session. */
+export interface PreviewBrowserCommand {
+  name: 'reload' | 'navigate' | 'back' | 'forward' | 'screenshot'
+  url?: string
+}
+
+/** Body of one `POST /webview-browser-input` request. */
+export interface PreviewBrowserRequest {
+  sessionId: PreviewSessionId
+  channel: PreviewChannel
+  input?: PreviewBrowserInput
+  command?: PreviewBrowserCommand
+}
+
+function boundedNumber(value: unknown, limit: number): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= limit ? value : undefined
+}
+
+function modifiersOf(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= 15
+    ? value as number
+    : undefined
+}
+
+function buttonOf(value: unknown): PreviewBrowserMouseInput['button'] | undefined {
+  return value === 'left' || value === 'right' || value === 'middle' ? value : undefined
+}
+
+function inputOf(value: unknown): PreviewBrowserInput | undefined {
+  const record = recordOf(value)
+  if (record === undefined || typeof record.kind !== 'string') return undefined
+  const modifiers = record.modifiers === undefined ? 0 : modifiersOf(record.modifiers)
+  if (modifiers === undefined) return undefined
+  if (record.kind === 'mouse') {
+    const x = boundedNumber(record.x, PREVIEW_BROWSER_LIMITS.coordinate)
+    const y = boundedNumber(record.y, PREVIEW_BROWSER_LIMITS.coordinate)
+    const button = buttonOf(record.button)
+    const type = record.type === 'move' || record.type === 'down' || record.type === 'up' ? record.type : undefined
+    const clickCount = Number.isSafeInteger(record.clickCount) && (record.clickCount as number) >= 1
+      && (record.clickCount as number) <= 3 ? record.clickCount as number : undefined
+    return x === undefined || y === undefined || button === undefined || type === undefined || clickCount === undefined
+      ? undefined
+      : { kind: 'mouse', type, x, y, button, clickCount, modifiers }
+  }
+  if (record.kind === 'wheel') {
+    const x = boundedNumber(record.x, PREVIEW_BROWSER_LIMITS.coordinate)
+    const y = boundedNumber(record.y, PREVIEW_BROWSER_LIMITS.coordinate)
+    const deltaX = boundedNumber(record.deltaX, PREVIEW_BROWSER_LIMITS.delta)
+    const deltaY = boundedNumber(record.deltaY, PREVIEW_BROWSER_LIMITS.delta)
+    return x === undefined || y === undefined || deltaX === undefined || deltaY === undefined
+      ? undefined
+      : { kind: 'wheel', x, y, deltaX, deltaY, modifiers }
+  }
+  if (record.kind === 'key') {
+    const type = record.type === 'down' || record.type === 'up' || record.type === 'char' ? record.type : undefined
+    const key = boundedString(record.key, 64)
+    const code = boundedString(record.code, 64)
+    const text = record.text === undefined ? '' : boundedString(record.text, 64)
+    const windowsVirtualKeyCode = Number.isSafeInteger(record.windowsVirtualKeyCode)
+      ? record.windowsVirtualKeyCode as number : undefined
+    return type === undefined || key === undefined || code === undefined || text === undefined
+      || windowsVirtualKeyCode === undefined || windowsVirtualKeyCode < 0 || windowsVirtualKeyCode > 1_000
+      ? undefined
+      : { kind: 'key', type, key, code, text, windowsVirtualKeyCode, modifiers }
+  }
+  if (record.kind === 'text') {
+    const text = boundedString(record.text, PREVIEW_BROWSER_LIMITS.text, false)
+    return text === undefined ? undefined : { kind: 'text', text }
+  }
+  if (record.kind === 'viewport') {
+    const width = boundedNumber(record.width, 20_000)
+    const height = boundedNumber(record.height, 20_000)
+    const deviceScaleFactor = record.deviceScaleFactor === undefined
+      ? 1
+      : boundedNumber(record.deviceScaleFactor, 8)
+    return width === undefined || height === undefined || deviceScaleFactor === undefined || width < 1 || height < 1
+      ? undefined
+      : { kind: 'viewport', width, height, deviceScaleFactor }
+  }
+  return undefined
+}
+
+/** Strictly decode one browser input/command request body. */
+export function previewBrowserRequestOf(value: unknown): PreviewBrowserRequest | undefined {
+  const record = recordOf(value)
+  if (record === undefined) return undefined
+  const sessionId = sessionIdOf(record.sessionId)
+  const channel = channelOf(record.channel)
+  if (sessionId === undefined || channel === undefined) return undefined
+  const hasInput = Object.hasOwn(record, 'input')
+  const hasCommand = Object.hasOwn(record, 'command')
+  if (hasInput === hasCommand) return undefined
+  if (hasInput) {
+    const input = inputOf(record.input)
+    return input === undefined || !exactKeys(record, ['sessionId', 'channel', 'input'])
+      ? undefined
+      : { sessionId, channel, input }
+  }
+  const commandRecord = recordOf(record.command)
+  if (commandRecord === undefined) return undefined
+  const name = commandRecord.name
+  if (name !== 'reload' && name !== 'navigate' && name !== 'back' && name !== 'forward' && name !== 'screenshot') {
+    return undefined
+  }
+  if (name === 'navigate') {
+    const url = boundedString(commandRecord.url, PREVIEW_BROWSER_LIMITS.url, false)
+    if (url === undefined || !isPreviewableUrl(url) || !exactKeys(commandRecord, ['name', 'url'])) return undefined
+    return exactKeys(record, ['sessionId', 'channel', 'command'])
+      ? { sessionId, channel, command: { name, url } }
+      : undefined
+  }
+  return exactKeys(commandRecord, ['name']) && exactKeys(record, ['sessionId', 'channel', 'command'])
+    ? { sessionId, channel, command: { name } }
+    : undefined
 }
 
 function treeDetailOf(value: unknown): PreviewElementTreeDetail | undefined {

@@ -28,6 +28,16 @@ export interface Config {
    * login-gated pages can render. Cookies stay bound to their target Origin.
    */
   previewCookies: boolean
+  /** Browser executable for browser-mode previews; empty probes Chrome/Chromium. */
+  browserExecutable: string
+  /** Persistent browser profile directory; empty uses `<DSH_HOME>/web-review/browser-profile`. */
+  browserProfileDir: string
+  /** Run the preview browser without a visible window. */
+  browserHeadless: boolean
+  /** Emulated viewport width of a browser-mode preview. */
+  browserViewportWidth: number
+  /** Emulated viewport height of a browser-mode preview. */
+  browserViewportHeight: number
 }
 
 const uiSkillName = z.union([
@@ -46,6 +56,11 @@ export const Config: Schema<Config> = z.object({
   autoLoadSkills: z.array(uiSkillName)
     .default([...DEFAULT_AUTO_LOAD_SKILLS]),
   previewCookies: z.boolean().default(true),
+  browserExecutable: z.string().default(''),
+  browserProfileDir: z.string().default(''),
+  browserHeadless: z.boolean().default(true),
+  browserViewportWidth: z.number().default(1280),
+  browserViewportHeight: z.number().default(800),
 })
 
 function skillDirectory(name: UiSkillName): URL {

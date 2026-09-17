@@ -22,11 +22,15 @@ import {
 } from './annotation-context.ts'
 import { PREVIEW_GUIDANCE } from './preview-guidance.ts'
 import {
+  PREVIEW_BROWSER_INPUT_PATH,
+  PREVIEW_BROWSER_STREAM_PATH,
   PREVIEW_CLIENT_HEADER,
   PREVIEW_CLIENT_HEADER_VALUE,
   PREVIEW_SESSIONS_PATH,
+  previewBrowserRequestOf,
   type PreviewSessionId,
 } from './preview-contract.ts'
+import { BrowserPreviewSessions } from './browser-preview.ts'
 import { startIsolatedPreviewServer, type IsolatedPreviewServer } from './preview-server.ts'
 import {
   readRequestBytes,
@@ -67,11 +71,29 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     text: PREVIEW_GUIDANCE,
   })
   const livePreviewServer = previewServer
+  const browserSessions = BrowserPreviewSessions.create({
+    executable: config.browserExecutable,
+    profileDir: config.browserProfileDir,
+    headless: config.browserHeadless,
+    viewportWidth: config.browserViewportWidth,
+    viewportHeight: config.browserViewportHeight,
+  })
+  ctx.effect(() => () => { void browserSessions.close() }, 'dsh-web-review: browser preview sessions')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: PREVIEW_SESSIONS_PATH,
-    handler: previewSessionsHandler(livePreviewServer),
+    handler: previewSessionsHandler(livePreviewServer, browserSessions),
   }), 'dsh-web-review: preview-session control route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: PREVIEW_BROWSER_STREAM_PATH,
+    handler: browserStreamHandler(browserSessions),
+  }), 'dsh-web-review: /webview-browser-stream route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: PREVIEW_BROWSER_INPUT_PATH,
+    handler: browserInputHandler(browserSessions),
+  }), 'dsh-web-review: /webview-browser-input route')
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',
@@ -140,6 +162,7 @@ async function jsonBody(req: IncomingMessage): Promise<unknown> {
 
 function previewSessionsHandler(
   server: IsolatedPreviewServer,
+  browserSessions: BrowserPreviewSessions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE
@@ -163,15 +186,23 @@ function previewSessionsHandler(
       return
     }
     if (req.method === 'POST') {
-      const record = exactRecord(value, ['target'])
-      if (record === undefined || typeof record.target !== 'string' || record.target.length > 4_096
-        || !isPreviewableUrl(record.target)) {
+      const record = exactRecord(value, ['target']) ?? exactRecord(value, ['target', 'mode'])
+      const mode = record?.mode === 'browser' ? 'browser' : record?.mode === undefined ? 'proxy' : undefined
+      if (record === undefined || mode === undefined || typeof record.target !== 'string'
+        || record.target.length > 4_096 || !isPreviewableUrl(record.target)) {
         res.writeHead(400, { 'cache-control': 'no-store' })
         res.end('invalid preview target')
         return
       }
       try {
-        const descriptor = server.createSession(record.target, origin)
+        const descriptor = mode === 'browser'
+          ? await browserSessions.create(record.target, origin)
+          : server.createSession(record.target, origin)
+        if (descriptor === undefined) {
+          res.writeHead(503, { 'cache-control': 'no-store' })
+          res.end('browser preview unavailable')
+          return
+        }
         res.writeHead(201, {
           'cache-control': 'no-store',
           'content-type': 'application/json; charset=utf-8',
@@ -192,12 +223,141 @@ function previewSessionsHandler(
         return
       }
       server.releaseSessions(record.sessionIds as PreviewSessionId[])
+      await browserSessions.release(record.sessionIds as PreviewSessionId[])
       res.writeHead(204, { 'cache-control': 'no-store' })
       res.end()
       return
     }
     res.writeHead(405, { allow: 'POST, DELETE', 'cache-control': 'no-store' })
     res.end()
+  }
+}
+
+/**
+ * Route handler for `/webview-browser-stream`: hold one server-sent-event
+ * stream open for a browser session and forward its frames and state.
+ *
+ * The stream is a GET, so it cannot carry the plugin client header; the
+ * 256-bit session/channel capability minted by the control route is the
+ * authorization, and a browser-supplied Origin must still match the request
+ * host when present.
+ * @param sessions - browser preview manager owning the frames.
+ * @returns the route handler owning the response until the client disconnects.
+ */
+function browserStreamHandler(
+  sessions: BrowserPreviewSessions,
+): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req, res) => {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { allow: 'GET', 'cache-control': 'no-store' })
+      res.end()
+      return
+    }
+    const origin = req.headers.origin
+    if (typeof origin === 'string' && requestOrigin(req) === undefined) {
+      res.writeHead(403, { 'cache-control': 'no-store' })
+      res.end('same-origin browser request required')
+      return
+    }
+    let requestUrl: URL
+    try {
+      requestUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`)
+    } catch {
+      res.writeHead(400, { 'cache-control': 'no-store' })
+      res.end('bad request')
+      return
+    }
+    const sessionId = requestUrl.searchParams.get('sessionId') ?? ''
+    const channel = requestUrl.searchParams.get('channel') ?? ''
+    if (!/^[a-f\d]{32}$/u.test(sessionId) || !/^[a-f\d]{32}$/u.test(channel)) {
+      res.writeHead(400, { 'cache-control': 'no-store' })
+      res.end('invalid preview session')
+      return
+    }
+    res.writeHead(200, {
+      'cache-control': 'no-store, no-transform',
+      'content-type': 'text/event-stream; charset=utf-8',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    })
+    let closed = false
+    const write = (chunk: string): void => {
+      if (closed || res.writableEnded) return
+      res.write(chunk)
+    }
+    const unsubscribe = sessions.subscribe(sessionId, channel, (event) => {
+      write(`data: ${JSON.stringify(event)}\n\n`)
+    })
+    if (unsubscribe === undefined) {
+      write(`data: ${JSON.stringify({ type: 'error', message: 'preview session not found' })}\n\n`)
+      closed = true
+      res.end()
+      return
+    }
+    const heartbeat = setInterval(() => { write(': keep-alive\n\n') }, 15_000)
+    heartbeat.unref()
+    const cleanup = (): void => {
+      if (closed) return
+      closed = true
+      clearInterval(heartbeat)
+      unsubscribe()
+    }
+    res.once('close', cleanup)
+    req.once('close', cleanup)
+  }
+}
+
+/**
+ * Route handler for `/webview-browser-input`: forward pointer, keyboard, text,
+ * viewport, and command requests into the browser page of one session.
+ * @param sessions - browser preview manager owning the page targets.
+ * @returns the route handler.
+ */
+function browserInputHandler(
+  sessions: BrowserPreviewSessions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { allow: 'POST', 'cache-control': 'no-store' })
+      res.end()
+      return
+    }
+    if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE
+      || !(req.headers['content-type'] ?? '').toString().toLowerCase().startsWith('application/json')) {
+      res.writeHead(415, { 'cache-control': 'no-store' })
+      res.end('preview client JSON required')
+      return
+    }
+    if (requestOrigin(req) === undefined) {
+      res.writeHead(403, { 'cache-control': 'no-store' })
+      res.end('same-origin browser request required')
+      return
+    }
+    let value: unknown
+    try {
+      value = await jsonBody(req)
+    } catch (error) {
+      res.writeHead(413, { 'cache-control': 'no-store' })
+      res.end(error instanceof Error ? error.message : 'request too large')
+      return
+    }
+    const request = previewBrowserRequestOf(value)
+    if (request === undefined) {
+      res.writeHead(400, { 'cache-control': 'no-store' })
+      res.end('invalid browser input')
+      return
+    }
+    const result = await sessions.dispatch(request)
+    if (!result.ok) {
+      res.writeHead(result.status, { 'cache-control': 'no-store' })
+      res.end(result.message)
+      return
+    }
+    res.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-type': 'application/json; charset=utf-8',
+    })
+    res.end(JSON.stringify(result.screenshot === undefined ? { ok: true } : { ok: true, screenshot: result.screenshot }))
   }
 }
 

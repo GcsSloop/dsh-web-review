@@ -23,10 +23,13 @@ import HttpServer from '@deepseek-ai/dsh-host-webserver'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import SkillService from '@deepseek-ai/dsh-skill'
+import { resolveBrowserExecutable } from '../src/cdp-transport.ts'
 import * as plugin from '../src/index.ts'
 import { PREVIEW_GUIDANCE } from '../src/index.ts'
 import { MAX_ANNOTATION_BODY, type AnnotationSnapshot } from '../src/annotation-contract.ts'
 import {
+  PREVIEW_BROWSER_INPUT_PATH,
+  PREVIEW_BROWSER_STREAM_PATH,
   PREVIEW_CLIENT_HEADER,
   PREVIEW_CLIENT_HEADER_VALUE,
   PREVIEW_NAVIGATE_PREFIX,
@@ -578,4 +581,132 @@ describe('/webview-annotations (real Loader + webserver composition)', () => {
     const response = await fetch(`http://127.0.0.1:${port}/webview-annotations`)
     expect(response.status).toBe(405)
   })
+})
+
+/**
+ * Read server-sent events until `done` accepts the collected batch.
+ * @param response - the open SSE response.
+ * @param done - predicate deciding when enough events arrived.
+ * @param timeoutMs - overall deadline.
+ */
+async function readSseEvents(
+  response: Response,
+  done: (events: Array<Record<string, unknown>>) => boolean,
+  timeoutMs = 45_000,
+): Promise<Array<Record<string, unknown>>> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) throw new Error('stream has no body')
+  const decoder = new TextDecoder()
+  const events: Array<Record<string, unknown>> = []
+  let buffer = ''
+  const deadline = Date.now() + timeoutMs
+  try {
+    while (Date.now() < deadline) {
+      const { value, done: finished } = await reader.read()
+      if (finished) break
+      buffer += decoder.decode(value, { stream: true })
+      let separator = buffer.indexOf('\n\n')
+      while (separator >= 0) {
+        const chunk = buffer.slice(0, separator)
+        buffer = buffer.slice(separator + 2)
+        const line = chunk.split('\n').find(candidate => candidate.startsWith('data: '))
+        if (line !== undefined) events.push(JSON.parse(line.slice(6)) as Record<string, unknown>)
+        separator = buffer.indexOf('\n\n')
+      }
+      if (done(events)) return events
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+  throw new Error(`stream produced ${String(events.length)} events before the deadline`)
+}
+
+describe('browser preview transport (real Loader + webserver composition)', () => {
+  it.skipIf(resolveBrowserExecutable() === undefined)(
+    'streams a real page, forwards input, and releases the session',
+    async () => {
+      const profileDir = await mkdtemp(join(tmpdir(), 'dsh-web-review-browser-'))
+      await loadComposition({ browserProfileDir: profileDir })
+      const host = `http://127.0.0.1:${String(port)}`
+      const control = (body: unknown): Promise<Response> => fetch(`${host}${PREVIEW_SESSIONS_PATH}`, {
+        method: 'POST',
+        headers: {
+          origin: host,
+          'content-type': 'application/json',
+          [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+        },
+        body: JSON.stringify(body),
+      })
+
+      const created = await control({ target: `${fixtureUrl}/`, mode: 'browser' })
+      expect(created.status).toBe(201)
+      const descriptor = previewSessionDescriptorOf(await created.json() as unknown)
+      if (descriptor === undefined) throw new Error('invalid browser descriptor')
+      expect(descriptor.mode).toBe('browser')
+      expect(descriptor.frameUrl).toBe(`${fixtureUrl}/`)
+      expect(descriptor.frameOrigin).toBe(host)
+
+      const stream = await fetch(
+        `${host}${PREVIEW_BROWSER_STREAM_PATH}?sessionId=${descriptor.sessionId}&channel=${descriptor.channel}`,
+      )
+      expect(stream.status).toBe(200)
+      expect(stream.headers.get('content-type')).toContain('text/event-stream')
+      const events = await readSseEvents(stream, collected => (
+        collected.some(event => event.type === 'frame') && collected.some(event => event.type === 'state')
+      ))
+      const frame = events.find(event => event.type === 'frame')
+      expect(String(frame?.data).length).toBeGreaterThan(200)
+      expect(Number(frame?.deviceHeight)).toBeGreaterThan(0)
+
+      const input = (body: unknown): Promise<Response> => fetch(`${host}${PREVIEW_BROWSER_INPUT_PATH}`, {
+        method: 'POST',
+        headers: {
+          origin: host,
+          'content-type': 'application/json',
+          [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+        },
+        body: JSON.stringify(body),
+      })
+      const moved = await input({
+        sessionId: descriptor.sessionId,
+        channel: descriptor.channel,
+        input: { kind: 'mouse', type: 'move', x: 12, y: 24, button: 'left', clickCount: 1, modifiers: 0 },
+      })
+      expect(moved.status).toBe(200)
+
+      const shot = await input({
+        sessionId: descriptor.sessionId,
+        channel: descriptor.channel,
+        command: { name: 'screenshot' },
+      })
+      expect(shot.status).toBe(200)
+      const captured = await shot.json() as { screenshot?: string }
+      expect(captured.screenshot?.startsWith('iVBOR')).toBe(true)
+
+      expect((await input({ sessionId: descriptor.sessionId, channel: descriptor.channel })).status).toBe(400)
+      expect((await input({
+        sessionId: descriptor.sessionId,
+        channel: 'f'.repeat(32),
+        input: { kind: 'mouse', type: 'move', x: 1, y: 1, button: 'left', clickCount: 1, modifiers: 0 },
+      })).status).toBe(404)
+
+      const released = await fetch(`${host}${PREVIEW_SESSIONS_PATH}`, {
+        method: 'DELETE',
+        headers: {
+          origin: host,
+          'content-type': 'application/json',
+          [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+        },
+        body: JSON.stringify({ sessionIds: [descriptor.sessionId] }),
+      })
+      expect(released.status).toBe(204)
+      expect((await input({
+        sessionId: descriptor.sessionId,
+        channel: descriptor.channel,
+        input: { kind: 'mouse', type: 'move', x: 1, y: 1, button: 'left', clickCount: 1, modifiers: 0 },
+      })).status).toBe(404)
+      await rm(profileDir, { recursive: true, force: true })
+    },
+    90_000,
+  )
 })
