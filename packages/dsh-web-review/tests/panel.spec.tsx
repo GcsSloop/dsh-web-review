@@ -25,6 +25,7 @@ import {
   type PreviewHostMessage,
   type PreviewSessionDescriptor,
   type PreviewSessionId,
+  type PreviewSessionMode,
 } from '../src/preview-contract.ts'
 import { encodeTarget } from '../src/proxy-url.ts'
 import { DraftOverlayBar, type WebviewDockInjected } from '../src/client/DraftOverlayBar.tsx'
@@ -279,6 +280,7 @@ function renderView(
   params: Record<string, unknown> = {},
   existing?: ReturnType<WebviewStore['create']>,
   address = '',
+  sessionFactory?: (target: string, mode?: PreviewSessionMode) => Promise<PreviewSessionDescriptor>,
 ) {
   // A remount case (another sidebar tab became active) keeps the session's store.
   const store = existing ?? createWebviewStore().create()
@@ -287,7 +289,7 @@ function renderView(
     draft, draftRev: 0, phase, occurrences: [], queue: [], imageIds: [],
   }
   let sessionSequence = 0
-  const createPreviewSession = (target: string): Promise<PreviewSessionDescriptor> => {
+  const createPreviewSession = sessionFactory ?? ((target: string): Promise<PreviewSessionDescriptor> => {
     sessionSequence += 1
     const sessionId = sessionSequence.toString(16).padStart(32, '0') as PreviewSessionId
     const channel = (sessionSequence + 100).toString(16).padStart(32, '0') as PreviewChannel
@@ -307,7 +309,7 @@ function renderView(
         return Promise.resolve(descriptor)
       },
     } as unknown as Promise<PreviewSessionDescriptor>
-  }
+  })
   render(
     <PreviewTabBody
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -786,6 +788,31 @@ describe('PreviewTabBody', () => {
     fetchMock.mockImplementation(async () => { throw new Error('offline') })
     await expect(openExternalLink('http://localhost:5173/')).resolves.toBe(false)
     vi.unstubAllGlobals()
+  })
+
+  it('falls back to the next transport instead of sitting on the starting notice', async () => {
+    const seen: string[] = []
+    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', {}, undefined, '', (target, mode) => {
+      seen.push(String(mode))
+      if (mode === 'native') {
+        return Promise.reject(Object.assign(new Error('panel unavailable'), { status: 503 }))
+      }
+      return Promise.resolve({
+        sessionId: 'f'.repeat(32) as PreviewSessionId,
+        channel: 'e'.repeat(32) as PreviewChannel,
+        mode: 'proxy',
+        frameOrigin: `http://${'f'.repeat(32)}.localhost:43123`,
+        frameUrl: `http://${'f'.repeat(32)}.localhost:43123${PREVIEW_ENTRY_PREFIX}${encodeTarget(target)}`,
+        targetOrigin: new URL(target).origin,
+      })
+    })
+    await act(async () => { store.actions.setUrl('http://localhost:5173/') })
+
+    // Before the fix the retry returned early on the unchanged address and the
+    // pane showed "starting isolated preview" forever.
+    await waitFor(() => { expect(document.querySelector('iframe')).not.toBeNull() })
+    expect(seen).toEqual(['native', 'browser'])
+    expect(document.querySelector('[data-webview-error]')).toBeNull()
   })
 
   it('re-attaches to the live session when its tab body remounts', async () => {

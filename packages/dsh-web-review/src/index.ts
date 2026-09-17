@@ -203,7 +203,9 @@ function previewSessionsHandler(
     }
     if (req.method === 'POST') {
       const record = exactRecord(value, ['target']) ?? exactRecord(value, ['target', 'mode'])
-      const mode = record?.mode === 'browser' || record?.mode === 'native'
+      // `proxy` is a first-class transport the fallback ladder asks for by name;
+      // omitting `mode` is the same request, kept for older clients.
+      const mode = record?.mode === 'browser' || record?.mode === 'native' || record?.mode === 'proxy'
         ? record.mode
         : record?.mode === undefined ? 'proxy' : undefined
       if (record === undefined || mode === undefined || typeof record.target !== 'string'

@@ -457,6 +457,16 @@ describe('isolated preview Origin (real Loader + webserver composition)', () => 
       body: JSON.stringify({ target: fixtureUrl }),
     })
     expect(foreignOrigin.status).toBe(403)
+    // The fallback ladder names `proxy` explicitly; the route must accept it as
+    // the same request as omitting the mode, or a preview can never reach its
+    // last transport.
+    const named = await fetch(`${hostOrigin}${PREVIEW_SESSIONS_PATH}`, {
+      method: 'POST',
+      headers: { origin: hostOrigin, 'content-type': 'application/json', [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE },
+      body: JSON.stringify({ target: `${fixtureUrl}/`, mode: 'proxy' }),
+    })
+    expect(named.status).toBe(201)
+    expect((await named.json() as { mode?: string }).mode).toBe('proxy')
   })
 
   it('returns 502 for unreachable targets and rejects unsupported frame methods', async () => {

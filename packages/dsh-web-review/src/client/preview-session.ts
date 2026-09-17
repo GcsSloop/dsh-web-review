@@ -14,23 +14,43 @@ import {
 } from '../preview-contract.ts'
 
 /**
+ * How long one transport may take before the caller tries the next one.
+ *
+ * A request that never settles used to leave the pane on "starting preview"
+ * with no way out, so every attempt carries its own deadline; the timeout is
+ * reported as an unavailable transport, which is what runs the fallback ladder.
+ */
+const PREVIEW_CREATE_TIMEOUT_MS = 12_000
+
+/**
  * Create one node-owned preview session for a requested page.
  * @param target - absolute HTTP(S) URL to preview.
- * @param mode - `browser` opens a real Chromium page; `proxy` uses the isolated
- * HTTP transport. A `503` carries the status so the caller can fall back.
+ * @param mode - `browser` opens a real Chromium page, `native` the desktop
+ * shell's panel, `proxy` the isolated HTTP transport. A `503` carries the status
+ * so the caller can fall back.
  */
 export async function createPreviewSession(
   target: string,
   mode: PreviewSessionMode = 'browser',
 ): Promise<PreviewSessionDescriptor> {
-  const response = await fetch(PREVIEW_SESSIONS_PATH, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
-    },
-    body: JSON.stringify({ target, mode }),
-  })
+  let response: Response
+  try {
+    response = await fetch(PREVIEW_SESSIONS_PATH, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+      },
+      body: JSON.stringify({ target, mode }),
+      signal: AbortSignal.timeout(PREVIEW_CREATE_TIMEOUT_MS),
+    })
+  } catch (error) {
+    // An aborted attempt is a transport that did not answer in time.
+    throw Object.assign(
+      new Error(error instanceof Error ? error.message : 'preview session creation timed out'),
+      { status: 503, timedOut: true },
+    )
+  }
   if (!response.ok) {
     throw Object.assign(new Error(`preview session creation failed (${String(response.status)})`), {
       status: response.status,

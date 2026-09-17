@@ -377,6 +377,8 @@ export function PreviewTabBody({
     loadedPageUrl.current === null ? null : mountedSession?.descriptor ?? null,
   )
   const [error, setError] = useState<string | null>(null)
+  /** Why the last attempt failed, shown as the error strip's tooltip. */
+  const [errorDetail, setErrorDetail] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   /**
    * Transport preference: the shell's native panel first, then a real Chromium
@@ -571,11 +573,12 @@ export function PreviewTabBody({
     if (requestedUrl === '') return
     const normalized = normalizePreviewUrl(requestedUrl)
     if (normalized === undefined || normalized === loadedPageUrl.current) return
-    loadedPageUrl.current = null
     actions.setError(null)
     actions.setTitle('')
     actions.clearPicks()
-    setPreviewRequestRevision(value => value + 1)
+    setErrorDetail(null)
+    // The address change alone re-runs session creation: bumping a revision here
+    // as well would start a second session for the address being replaced.
     actions.setUrl(normalized)
   }, [requestedUrl, info.tab.navigation.revision, actions])
 
@@ -601,6 +604,7 @@ export function PreviewTabBody({
         release([next.sessionId])
         return
       }
+      setErrorDetail(null)
       const previous = tabSessions.get(tabKey)
       tabSessions.set(tabKey, { descriptor: next, url: state.url })
       // A replaced session would otherwise linger as an idle panel until it expires.
@@ -612,12 +616,18 @@ export function PreviewTabBody({
     }).catch((thrown: unknown) => {
       setLoading(false)
       if (!mounted.current || request !== sessionRequest.current) return
-      if ((thrown as { status?: number }).status === 503) {
-        // native -> browser -> proxy, one step per unavailable transport.
-        if (mode === 'native') { setPreferredMode('browser'); return }
-        if (mode === 'browser') { setPreferredMode('proxy'); return }
+      const status = (thrown as { status?: number }).status
+      const timedOut = (thrown as { timedOut?: boolean }).timedOut === true
+      if (status === 503 || timedOut) {
+        // native -> browser -> proxy, one step per unavailable transport. The
+        // address must be released here or the re-run this triggers would return
+        // early and the pane would sit on "starting preview" forever.
+        loadedPageUrl.current = null
+        if (mode === 'native') { setPreferredMode('browser'); setErrorDetail('native unavailable → browser'); return }
+        if (mode === 'browser') { setPreferredMode('proxy'); setErrorDetail('browser unavailable → proxy'); return }
       }
       loadedPageUrl.current = null
+      setErrorDetail(`${mode} ${timedOut ? 'timed out' : String(status ?? 'failed')}`)
       actionsRef.current.setError(t('panel.previewUnavailable'))
     })
   }, [state.url, previewRequestRevision, createPreviewSession, t, preferredMode, tabKey])
@@ -1038,7 +1048,7 @@ export function PreviewTabBody({
           </div>
         )}
       {visibleError !== null && (
-        <div className={css.error} role="alert" title={visibleError} data-webview-error="">
+        <div className={css.error} role="alert" title={errorDetail ?? visibleError} data-webview-error="">
           <IconWarningOutline16 size={14} className={css.errorIcon} />
           <span>{visibleError}</span>
         </div>
