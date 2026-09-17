@@ -143,6 +143,13 @@ const tabSessions = new Map<string, { descriptor: PreviewSessionDescriptor; url:
 const tabPicks = new Map<string, PickItem[]>()
 let picksOwnerTab: string | null = null
 
+/** Test-only hook: drop every cached tab session and annotation list. */
+export function resetPreviewTabStateForTest(): void {
+  tabSessions.clear()
+  tabPicks.clear()
+  picksOwnerTab = null
+}
+
 interface GuideEntry {
   order: number
   title: () => string
@@ -378,12 +385,20 @@ export function PreviewTabBody({
   const tabKey = String(info.tab.id ?? 'preview')
   const mountedSession = tabSessions.get(tabKey)
   /** The page this body is showing; it also guards the store's own URL echo. */
-  const loadedPageUrl = useRef<string | null>(
-    mountedSession !== undefined && mountedSession.url === state.url ? mountedSession.url : null,
-  )
+  const loadedPageUrl = useRef<string | null>(mountedSession?.url ?? null)
   const [descriptor, setDescriptor] = useState<PreviewSessionDescriptor | null>(
     loadedPageUrl.current === null ? null : mountedSession?.descriptor ?? null,
   )
+  /**
+   * The page this tab owns.
+   *
+   * Preview tabs of one session share a store, so its `url` can only describe
+   * one tab at a time. Each tab therefore keeps its own address here and only
+   * mirrors it into the store while it is the visible tab.
+   */
+  const [localUrl, setLocalUrl] = useState<string>(() => requestedUrl || loadedPageUrl.current || '')
+  /** The address bar's own text; follows the page but not the shared store. */
+  const [draft, setDraft] = useState<string>(() => requestedUrl || loadedPageUrl.current || '')
   const [error, setError] = useState<string | null>(null)
   /** Why the last attempt failed, shown as the error strip's tooltip. */
   const [errorDetail, setErrorDetail] = useState<string | null>(null)
@@ -587,6 +602,17 @@ export function PreviewTabBody({
     if (current !== null) navigateEditorTarget(action, current.comment, current.mode)
   }
 
+  // The dock records the address it wants opened before a tab has a page of its
+  // own; a visible tab without one adopts that request. A tab already showing a
+  // page keeps it, so one preview never steals another's address.
+  useEffect(() => {
+    if (!tabVisible || state.url === '' || loadedPageUrl.current !== null || localUrl !== '') return
+    const normalized = normalizePreviewUrl(state.url)
+    if (normalized === undefined) return
+    setLocalUrl(normalized)
+    setDraft(normalized)
+  }, [state.url, tabVisible])
+
   // An opener that names a URL (the assistant-link delegation, the dock, the
   // guide) navigates this tab; the store URL is then the session's trigger, so
   // the tab and every other surface of this session agree on one address.
@@ -594,32 +620,35 @@ export function PreviewTabBody({
     if (requestedUrl === '') return
     const normalized = normalizePreviewUrl(requestedUrl)
     if (normalized === undefined || normalized === loadedPageUrl.current) return
+    setLocalUrl(normalized)
+    // Only the tab the user is looking at describes the session; a hidden tab
+    // prepares its address and opens the session when it is shown.
+    if (!tabVisible) return
     actions.setError(null)
     actions.setTitle('')
     actions.clearPicks()
     setErrorDetail(null)
-    // The address change alone re-runs session creation: bumping a revision here
-    // as well would start a second session for the address being replaced.
     actions.setUrl(normalized)
-  }, [requestedUrl, info.tab.navigation.revision, actions])
+  }, [requestedUrl, info.tab.navigation.revision, tabVisible])
 
-  // A store URL that came from the bridge already belongs to the current
-  // session. Address-bar/assistant URL changes create a fresh isolated Origin.
+  // A hidden tab prepares no session: it would report bounds and fight the
+  // visible tab for the shell's single panel. The session starts when shown.
   useEffect(() => {
-    if (state.url === loadedPageUrl.current) return
+    if (!tabVisible) return
+    if (localUrl === loadedPageUrl.current) return
     sessionRequest.current += 1
     const request = sessionRequest.current
     setPickerReady(false)
     setHistoryState({ canGoBack: false, canGoForward: false })
     setDescriptor(null)
-    if (state.url === '') {
+    if (localUrl === '') {
       loadedPageUrl.current = null
       setLoading(false)
       return
     }
-    loadedPageUrl.current = state.url
+    loadedPageUrl.current = localUrl
     const mode = preferredMode
-    const attemptKey = `${state.url}|${String(previewRequestRevision)}`
+    const attemptKey = `${localUrl}|${String(previewRequestRevision)}`
     if (attemptsRef.current.key !== attemptKey) attemptsRef.current = { key: attemptKey, count: 0 }
     attemptsRef.current.count += 1
     if (attemptsRef.current.count > MAX_PREVIEW_ATTEMPTS) {
@@ -629,14 +658,14 @@ export function PreviewTabBody({
       return
     }
     setLoading(true)
-    void createSessionRef.current(state.url, mode).then((next) => {
+    void createSessionRef.current(localUrl, mode).then((next) => {
       if (!mounted.current || request !== sessionRequest.current) {
         release([next.sessionId])
         return
       }
       setErrorDetail(null)
       const previous = tabSessions.get(tabKey)
-      tabSessions.set(tabKey, { descriptor: next, url: state.url })
+      tabSessions.set(tabKey, { descriptor: next, url: localUrl })
       // A replaced session would otherwise linger as an idle panel until it expires.
       if (previous !== undefined && previous.descriptor.sessionId !== next.sessionId) {
         release([previous.descriptor.sessionId])
@@ -663,7 +692,7 @@ export function PreviewTabBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs above exist
     // exactly so the fresh closures of `createPreviewSession` and `t` cannot
     // re-run this effect.
-  }, [state.url, previewRequestRevision, preferredMode, tabKey])
+  }, [localUrl, previewRequestRevision, preferredMode, tabKey, tabVisible])
 
   useEffect(() => {
     if (descriptor === null) return
@@ -673,6 +702,8 @@ export function PreviewTabBody({
         setPickerReady(true)
         setHistoryState({ canGoBack: ready.canGoBack, canGoForward: ready.canGoForward })
         loadedPageUrl.current = ready.pageUrl
+        setLocalUrl(ready.pageUrl)
+        setDraft(ready.pageUrl)
         // Only the tab the user is looking at describes the session: another
         // preview tab's page must not rewrite the dock's context.
         if (!tabVisibleRef.current) return
@@ -718,6 +749,7 @@ export function PreviewTabBody({
           setHistoryState({ canGoBack: false, canGoForward: false })
           setLoading(nativeState.loading)
           loadedPageUrl.current = nativeState.url
+          if (nativeState.url !== '') { setLocalUrl(nativeState.url); setDraft(nativeState.url) }
           if (tabVisibleRef.current) {
             actionsRef.current.setError(null)
             actionsRef.current.setTitle(nativeState.title)
@@ -732,6 +764,7 @@ export function PreviewTabBody({
         onSessionLost: () => { replaceSession(descriptor.sessionId) },
       })
       nativeSurfaceRef.current = surface
+      surface.setVisible(tabVisibleRef.current)
       bridge = new PreviewBridgeClient(surface.carrier(), descriptor, callbacks)
       bridgeRef.current = bridge
       const detach = surface.attach(placeholder)
@@ -754,6 +787,7 @@ export function PreviewTabBody({
           setHistoryState({ canGoBack: false, canGoForward: false })
           setLoading(browserState.loading)
           loadedPageUrl.current = browserState.url
+          if (browserState.url !== '') { setLocalUrl(browserState.url); setDraft(browserState.url) }
           if (tabVisibleRef.current) {
             actionsRef.current.setError(null)
             actionsRef.current.setTitle(browserState.title)
@@ -819,8 +853,10 @@ export function PreviewTabBody({
       picksOwnerTab = tabKey
       actionsRef.current.setPicks(tabPicks.get(tabKey) ?? [])
       // The dock must describe the page this tab shows, not the one it replaced.
-      const pageUrl = loadedPageUrl.current
-      if (pageUrl !== null && stateRef.current.url !== pageUrl) actionsRef.current.setUrl(pageUrl)
+      const pageUrl = localUrl !== '' ? localUrl : loadedPageUrl.current
+      if (pageUrl !== null && pageUrl !== '' && stateRef.current.url !== pageUrl) {
+        actionsRef.current.setUrl(pageUrl)
+      }
     }
   }, [tabVisible, tabKey])
 
@@ -883,17 +919,21 @@ export function PreviewTabBody({
       actions.setError(t('panel.urlInvalid'))
       return
     }
-    actions.setError(null)
-    actions.setTitle('')
-    actions.clearPicks()
     if (normalized === loadedPageUrl.current) {
       // The same address is a reload, not a new session.
       bridgeRef.current?.reload()
       return
     }
-    setPreviewRequestRevision(value => value + 1)
+    setLocalUrl(normalized)
+    setDraft(normalized)
     setHistoryState({ canGoBack: false, canGoForward: false })
-    actions.setUrl(normalized)
+    setPreviewRequestRevision(value => value + 1)
+    if (tabVisible) {
+      actions.setError(null)
+      actions.setTitle('')
+      actions.clearPicks()
+      actions.setUrl(normalized)
+    }
   }
 
   const surfaceElement: HTMLElement | null = descriptor?.mode === 'native'
@@ -901,7 +941,7 @@ export function PreviewTabBody({
     : descriptor?.mode === 'browser' ? canvasRef.current : frameRef.current
   /** The desktop shell renders this preview in its own panel. */
   const shellHosted = descriptor?.mode === 'native'
-  const pickDisabled = !pickerReady || state.url === ''
+  const pickDisabled = !pickerReady || localUrl === ''
   const visibleError = state.annotationSync.status === 'error' ? state.annotationSync.message : state.error ?? error
   const inputBusy = input.phase === 'adjudicating' || input.phase === 'submitting'
   const canSendAnnotations = state.picks.length > 0
@@ -985,8 +1025,8 @@ export function PreviewTabBody({
             >
               <IconTrashOutline16 size={16} />
             </button>
-            <div className={css.annotationTitle} title={state.url}>
-              {t('panel.pick.active', { url: state.url })}
+            <div className={css.annotationTitle} title={localUrl || state.url}>
+              {t('panel.pick.active', { url: localUrl || state.url })}
             </div>
             <button
               type="button"
@@ -1028,7 +1068,7 @@ export function PreviewTabBody({
               className={css.icon}
               aria-label={t('panel.refresh')}
               title={t('panel.refresh')}
-              disabled={state.url === ''}
+              disabled={localUrl === ''}
               onClick={() => { bridgeRef.current?.reload() }}
             >
               <IconRefreshOutline16 size={16} />
@@ -1036,19 +1076,17 @@ export function PreviewTabBody({
             <div className={css.urlField}>
               <Input
                 className={css.url ?? ''}
-                value={state.urlDraft}
+                value={draft}
                 maxLength={ANNOTATION_LIMITS.pageUrl}
                 placeholder={t('panel.urlPlaceholder')}
-                onChange={(e) => {
-                  actions.setUrlDraft(e.target.value)
-                }}
-                onKeyDown={(e) => { if (e.key === 'Enter') navigate(state.urlDraft) }}
+                onChange={(e) => { setDraft(e.target.value) }}
+                onKeyDown={(e) => { if (e.key === 'Enter') navigate(draft) }}
                 spellCheck={false}
               />
-              {state.url !== '' && (
+              {localUrl !== '' && (
                 <a
                   className={css.inlineAction}
-                  href={state.url}
+                  href={localUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={t('panel.external')}
@@ -1059,8 +1097,8 @@ export function PreviewTabBody({
                     // new-tab path anywhere else.
                     if (!shellHosted) return
                     event.preventDefault()
-                    void openExternalLink(state.url).then((opened) => {
-                      if (!opened) window.open(state.url, '_blank', 'noopener,noreferrer')
+                    void openExternalLink(localUrl).then((opened) => {
+                      if (!opened) window.open(localUrl, '_blank', 'noopener,noreferrer')
                     })
                   }}
                 >

@@ -33,6 +33,7 @@ import {
   PreviewTabBody,
   previewAddressOf,
   previewUrlOfAddress,
+  resetPreviewTabStateForTest,
 } from '../src/client/sidebar/PreviewTab.tsx'
 import type { PickItem } from '../src/client/contract.ts'
 import { zh, type WebviewKey } from '../src/client/locales.ts'
@@ -153,6 +154,7 @@ function dispatchLink(link: HTMLAnchorElement, event: MouseEvent): boolean {
 
 const storageValues = new Map<string, string>()
 beforeEach(() => {
+  resetPreviewTabStateForTest()
   storageValues.clear()
   Object.defineProperty(window, 'localStorage', {
     configurable: true,
@@ -281,6 +283,7 @@ function renderView(
   existing?: ReturnType<WebviewStore['create']>,
   address = '',
   sessionFactory?: (target: string, mode?: PreviewSessionMode) => Promise<PreviewSessionDescriptor>,
+  visible = true,
 ) {
   // A remount case (another sidebar tab became active) keeps the session's store.
   const store = existing ?? createWebviewStore().create()
@@ -322,7 +325,7 @@ function renderView(
       useTabInfo={() => ({
         tab: {
           id: 'tab-preview',
-          visible: true,
+          visible,
           navigation: { address, params, revision: 0 },
         },
       })}
@@ -374,9 +377,9 @@ describe('PreviewTabBody', () => {
     })
     const input = screen.getByPlaceholderText(zh['panel.urlPlaceholder'])
     fireEvent.change(input, { target: { value: 'http://localhost:5173/' } })
-    expect(store.getSnapshot()).toMatchObject({
-      url: '', urlDraft: 'http://localhost:5173/', title: 'Old title',
-    })
+    // The address bar holds the tab's own draft, not the shared store.
+    expect((input as HTMLInputElement).value).toBe('http://localhost:5173/')
+    expect(store.getSnapshot()).toMatchObject({ url: '', title: 'Old title' })
     expect(store.getSnapshot().picks).toHaveLength(1)
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(store.getSnapshot()).toMatchObject({ title: '', picks: [] })
@@ -788,6 +791,27 @@ describe('PreviewTabBody', () => {
     fetchMock.mockImplementation(async () => { throw new Error('offline') })
     await expect(openExternalLink('http://localhost:5173/')).resolves.toBe(false)
     vi.unstubAllGlobals()
+  })
+
+  it('does not open a session for a hidden tab until it is shown', async () => {
+    // A hidden preview tab used to report visible bounds and fight the visible
+    // tab for the shell's single panel, making the pane flicker between pages.
+    const calls: string[] = []
+    const factory = (_target: string, mode?: PreviewSessionMode) => {
+      calls.push(String(mode))
+      return Promise.resolve({
+        sessionId: 'a'.repeat(32) as PreviewSessionId,
+        channel: 'b'.repeat(32) as PreviewChannel,
+        mode: 'proxy' as const,
+        frameOrigin: `http://${'a'.repeat(32)}.localhost:43123`,
+        frameUrl: `http://${'a'.repeat(32)}.localhost:43123${PREVIEW_ENTRY_PREFIX}x`,
+        targetOrigin: 'http://localhost:5173',
+      })
+    }
+    renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', { url: 'http://localhost:5173/' },
+      undefined, '', factory, false)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    expect(calls).toEqual([])
   })
 
   it('does not loop when the transport keeps failing and props change identity', async () => {
