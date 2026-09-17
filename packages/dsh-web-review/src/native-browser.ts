@@ -55,7 +55,7 @@ export interface NativePanelHost {
 
 /** Result of one dispatched request. */
 export type NativeDispatchResult =
-  | { ok: true }
+  | { ok: true; screenshot?: string }
   | { ok: false; status: number; message: string }
 
 interface NativeSession {
@@ -447,8 +447,29 @@ export class NativeBrowserSessions {
       }
       return await this.call(host, '/panel/command', { kind: 'navigate', url: command.url })
     }
-    // The panel is a real view: callers screenshot it rather than streaming it.
-    return { ok: false, status: 501, message: 'the native panel does not serve still frames' }
+    if (command.name === 'screenshot') {
+      // The shell's own compositor bitmap: cross-Origin content included.
+      return await this.capture(host)
+    }
+    return { ok: false, status: 501, message: `unsupported native command: ${command.name}` }
+  }
+
+  /** Capture one panel bitmap through the shell. */
+  private async capture(host: NativePanelHost): Promise<NativeDispatchResult> {
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(host.port)}/panel/snapshot`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(25_000),
+      })
+      const payload = await response.json() as { ok?: boolean; image?: unknown; error?: unknown }
+      if (!response.ok || payload.ok !== true || typeof payload.image !== 'string') {
+        const message = typeof payload.error === 'string' ? payload.error : `panel snapshot failed (${String(response.status)})`
+        return { ok: false, status: 502, message }
+      }
+      return { ok: true, screenshot: payload.image }
+    } catch (error) {
+      return { ok: false, status: 502, message: error instanceof Error ? error.message : 'panel snapshot failed' }
+    }
   }
 
   private async call(
