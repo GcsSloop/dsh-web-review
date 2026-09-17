@@ -25,6 +25,10 @@ export interface NativeSurfaceEvents {
 
 /** Panels smaller than this are treated as "not on screen yet". */
 const MIN_VISIBLE_EDGE = 8
+/** A layout that moves without resizing (a toolbar growing) still has to be seen. */
+const RECHECK_INTERVAL_MS = 800
+/** First report waits for the host to finish laying its chrome out. */
+const FIRST_REPORT_DELAY_MS = 120
 
 /** One real shell panel standing in for a placeholder element. */
 export class NativeBrowserSurface {
@@ -36,6 +40,8 @@ export class NativeBrowserSurface {
   private observer: ResizeObserver | null = null
   private scrollListener: (() => void) | null = null
   private reportTimer: ReturnType<typeof setTimeout> | undefined
+  private firstReportTimer: ReturnType<typeof setTimeout> | undefined
+  private recheckTimer: ReturnType<typeof setInterval> | undefined
   private lastBounds = ''
   private visible = true
   /** False while the tab holding this surface is not the visible one. */
@@ -58,6 +64,11 @@ export class NativeBrowserSurface {
     if (typeof ResizeObserver === 'function') {
       this.observer = new ResizeObserver(() => { this.scheduleReport() })
       this.observer.observe(element)
+      // A neighbouring row can change height without resizing this element, and a
+      // ResizeObserver would never hear about it: the panel would sit at a stale
+      // offset (the classic "it covers the address bar" case).
+      const parent = element.parentElement
+      if (parent !== null) this.observer.observe(parent)
     }
     const onScroll = (): void => { this.scheduleReport() }
     window.addEventListener('scroll', onScroll, true)
@@ -66,7 +77,20 @@ export class NativeBrowserSurface {
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', onScroll)
     }
-    this.reportBounds(true)
+    // Report once the host chrome has settled, then keep re-checking: a rect that
+    // is wrong for any reason repairs itself instead of staying wrong.
+    const settle = (attempt: number): void => {
+      if (this.disposed) return
+      this.reportBounds(true)
+      if (attempt < 3) this.firstReportTimer = setTimeout(() => { settle(attempt + 1) }, FIRST_REPORT_DELAY_MS * (attempt + 1))
+    }
+    const start = (): void => { settle(0) }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => { requestAnimationFrame(start) })
+    } else {
+      start()
+    }
+    this.recheckTimer = setInterval(() => { this.reportBounds(false) }, RECHECK_INTERVAL_MS)
     return () => {
       this.observer?.disconnect()
       this.observer = null
@@ -74,6 +98,10 @@ export class NativeBrowserSurface {
       this.scrollListener = null
       if (this.reportTimer !== undefined) clearTimeout(this.reportTimer)
       this.reportTimer = undefined
+      if (this.firstReportTimer !== undefined) clearTimeout(this.firstReportTimer)
+      this.firstReportTimer = undefined
+      if (this.recheckTimer !== undefined) clearInterval(this.recheckTimer)
+      this.recheckTimer = undefined
       if (this.visible) {
         this.visible = false
         void this.send({ kind: 'bounds', x: 0, y: 0, width: 0, height: 0, visible: false }).catch(() => undefined)
@@ -215,6 +243,10 @@ export class NativeBrowserSurface {
     this.disposed = true
     if (this.reportTimer !== undefined) clearTimeout(this.reportTimer)
     this.reportTimer = undefined
+    if (this.firstReportTimer !== undefined) clearTimeout(this.firstReportTimer)
+    this.firstReportTimer = undefined
+    if (this.recheckTimer !== undefined) clearInterval(this.recheckTimer)
+    this.recheckTimer = undefined
     this.stream?.close()
     this.stream = null
     this.observer?.disconnect()
