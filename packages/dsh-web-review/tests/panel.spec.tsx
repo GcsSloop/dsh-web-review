@@ -273,8 +273,10 @@ function renderView(
   submit = vi.fn(),
   phase: 'plain' | 'adjudicating' | 'claimed' | 'submitting' = 'plain',
   params: Record<string, unknown> = {},
+  existing?: ReturnType<WebviewStore['create']>,
 ) {
-  const store = createWebviewStore().create()
+  // A remount case (another sidebar tab became active) keeps the session's store.
+  const store = existing ?? createWebviewStore().create()
   const session = sessionSource()
   const input = {
     draft, draftRev: 0, phase, occurrences: [], queue: [], imageIds: [],
@@ -741,6 +743,24 @@ describe('PreviewTabBody', () => {
     await waitFor(() => { expect(store.getSnapshot().url).toBe('http://localhost:5173/docs') })
     const address = screen.getByPlaceholderText(zh['panel.urlPlaceholder']) as HTMLInputElement
     expect(address.value).toBe('http://localhost:5173/docs')
+  })
+
+  it('re-attaches to the live session when its tab body remounts', async () => {
+    // Switching sidebar tabs unmounts this body: the page must survive it.
+    const store = renderView()
+    act(() => { store.actions.setUrl('http://localhost:5173/') })
+    const bridge = installFrameBridge()
+    act(() => { bridge.ready() })
+    await waitFor(() => { expect(document.querySelector('iframe')).toBeTruthy() })
+    const firstSession = activeDescriptor?.sessionId
+    expect(firstSession).toBeTruthy()
+
+    cleanup()
+    renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', {}, store)
+
+    await waitFor(() => { expect(document.querySelector('iframe')).toBeTruthy() })
+    expect(activeDescriptor?.sessionId).toBe(firstSession)
+    expect(store.getSnapshot().url).toBe('http://localhost:5173/')
   })
 
 })

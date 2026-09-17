@@ -1,6 +1,6 @@
 /**
  * Visual-verification helper (not part of the test suite): boots the e2e
- * services, opens the Preview tab against the demo page, annotates two
+ * services, opens the right-Sidebar Preview tab against the demo page, annotates two
  * elements, and saves screenshots into .artifacts/ui/. Run with:
  *   pnpm exec tsx packages/dsh-web-review/tests/visual-shot.ts
  */
@@ -8,9 +8,9 @@ import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import {
   chromium,
-  clickWhenStable,
   connectWorkspace,
   newPage,
+  openPreviewTab,
   startServices,
   type E2EServices,
   REPO_ROOT,
@@ -29,7 +29,7 @@ try {
   const page = await newPage(browser)
   await page.goto(services.webUrl)
   await connectWorkspace(page, services.workspaceRoot, 'visual')
-  await clickWhenStable(page, page.getByRole('tab', { name: 'Web Preview' }))
+  await openPreviewTab(page)
   const urlInput = page.getByPlaceholder('Enter a URL and press Enter (e.g. http://localhost:5173)')
   await urlInput.waitFor({ timeout: 15_000 })
   await shot(page, 'panel-open-empty')

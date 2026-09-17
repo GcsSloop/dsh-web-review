@@ -28,18 +28,20 @@ dsh web
 
 ## Usage
 
-1. Ask the AI to start the frontend page you want to review, then click the URL it returns.
-   Alternatively, open the **Web Preview** tab in DSH and enter an absolute HTTP(S) URL.
-2. Click the annotation button, then select the target element on the page.
+1. Ask the AI to start the frontend page you want to review, then click the URL it returns: the preview opens in the right Sidebar.
+   Alternatively, pick **Web preview** from the right Sidebar's guide page and enter an absolute HTTP(S) URL.
+2. Click the annotation button at the end of the address row, then select the target element on the page.
 3. Enter your feedback. To preview visual changes, expand **Adjust** and edit the desired properties.
-4. Click the Send button in the annotation toolbar; after sending, the interface automatically returns to the **Chat** tab. You can also add more instructions in the DSH composer and use the regular DSH Send button; the annotations will be sent together with your prompt.
+4. Click the Send button in the annotation toolbar. You can also add more instructions in the DSH composer and use the regular DSH Send button; the annotations will be sent together with your prompt.
 5. After the agent updates the source code, refresh the preview to review the result. Continue annotating if further changes are needed.
 
 ## Features
 
 ### Web Preview
 
-- Open links provided by the agent directly inside DSH.
+- The preview is a page tab in the right Sidebar: it follows the column's open and closed state, and switching tabs keeps the page alive.
+- Back, forward, reload, and an address field, so browsing behaves like a browser.
+- The annotation editor docks at the bottom of the pane, sharing it with the page instead of covering it.
 
 ### Element Annotations
 

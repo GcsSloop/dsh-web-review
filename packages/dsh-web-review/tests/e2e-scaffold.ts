@@ -326,13 +326,40 @@ export async function connectWorkspace(page: Page, root: string, name = 'workspa
   await composer.waitFor({ timeout: 20_000 })
   await composer.click()
   // Leave the blank state: the conversation session header (and with it the
-  // view tablist — [Chat] [Preview]) only renders once the session holds a
-  // message. The probe message fails fast against the dead provider endpoint,
-  // so the turn settles and the header stays mounted; wait for the Preview
-  // tab here so callers never race the remount window.
+  // view tablist) only renders once the session holds a message. The probe
+  // message fails fast against the dead provider endpoint, so the turn settles
+  // and the header stays mounted; wait for the tablist here so callers never
+  // race the remount window.
   await page.keyboard.type('hello')
   await page.keyboard.press('Enter')
-  await page.getByRole('tab', { name: 'Web Preview' }).waitFor({ state: 'visible', timeout: 45_000 })
+  await page.getByRole('tab').first().waitFor({ state: 'visible', timeout: 45_000 })
+}
+
+/**
+ * Reveal the plugin's preview page tab in the right Sidebar.
+ *
+ * The preview lives in the host's right column, so a caller first expands the
+ * column and picks the type from its guide page (or activates the strip chip
+ * when the tab is already open). The plugin's own root marker is the readiness
+ * signal: it exists exactly while the tab body is mounted.
+ * @param page - the page under test.
+ */
+export async function openPreviewTab(page: Page): Promise<void> {
+  const panel = page.locator('[data-webview-sidebar-preview]')
+  if (await panel.count() === 0) {
+    const expand = page.locator('[data-sidebar-right-expand]')
+    if (await expand.count() > 0) await clickWhenStable(page, expand)
+    const guideEntry = page.locator('[data-sidebar-right-guide-entry]')
+      .filter({ hasText: 'Web preview' })
+    if (await guideEntry.count() > 0) {
+      await clickWhenStable(page, guideEntry.first())
+    } else {
+      const chip = page.getByRole('tab', { name: 'Web preview' })
+      if (await chip.count() > 0) await clickWhenStable(page, chip.first())
+    }
+  }
+  await panel.first().waitFor({ state: 'visible', timeout: 20_000 })
+  await page.getByPlaceholder('Enter a URL and press Enter').waitFor({ timeout: 15_000 })
 }
 
 /** Poll until a click succeeds: the session header re-mounts while a turn

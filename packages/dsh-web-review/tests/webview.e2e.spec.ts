@@ -10,6 +10,7 @@ import {
   clickWhenStable,
   connectWorkspace,
   newPage,
+  openPreviewTab,
   saveFailureShot,
   startServices,
   type E2EServices,
@@ -32,13 +33,8 @@ afterAll(async () => {
 async function bootWithPanel(page: Page, name: string): Promise<void> {
   await page.goto(services.webUrl)
   await connectWorkspace(page, services.workspaceRoot, name)
-  const previewTab = page.getByRole('tab', { name: 'Web Preview' })
-  await clickWhenStable(page, previewTab)
-  await expect.poll(
-    async () => previewTab.getAttribute('aria-selected'),
-    { timeout: 10_000, message: 'Preview should be the active conversation view' },
-  ).toBe('true')
-  await page.getByPlaceholder(en['panel.urlPlaceholder']).waitFor({ timeout: 15_000 })
+  // The preview is a right-Sidebar page tab: the host's column shows it.
+  await openPreviewTab(page)
 }
 
 async function loadDemoPage(page: Page): Promise<FrameLocator> {
