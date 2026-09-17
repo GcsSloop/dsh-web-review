@@ -31,6 +31,7 @@ import {
   type PreviewSessionId,
 } from './preview-contract.ts'
 import { BrowserPreviewSessions } from './browser-preview.ts'
+import { NativeBrowserSessions } from './native-browser.ts'
 import { startIsolatedPreviewServer, type IsolatedPreviewServer } from './preview-server.ts'
 import {
   readRequestBytes,
@@ -81,20 +82,25 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     viewportHeight: config.browserViewportHeight,
   })
   ctx.effect(() => () => { void browserSessions.close() }, 'dsh-web-review: browser preview sessions')
+  // The desktop shell hosts its own WKWebView panel when it advertises one; the
+  // plugin only needs its discovery file, so a shell without the capability
+  // simply leaves native mode unavailable.
+  const nativeSessions = await NativeBrowserSessions.create(bridgeSource)
+  ctx.effect(() => () => { void nativeSessions.close() }, 'dsh-web-review: native preview sessions')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: PREVIEW_SESSIONS_PATH,
-    handler: previewSessionsHandler(livePreviewServer, browserSessions),
+    handler: previewSessionsHandler(livePreviewServer, browserSessions, nativeSessions),
   }), 'dsh-web-review: preview-session control route')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: PREVIEW_BROWSER_STREAM_PATH,
-    handler: browserStreamHandler(browserSessions),
+    handler: browserStreamHandler(browserSessions, nativeSessions),
   }), 'dsh-web-review: /webview-browser-stream route')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: PREVIEW_BROWSER_INPUT_PATH,
-    handler: browserInputHandler(browserSessions),
+    handler: browserInputHandler(browserSessions, nativeSessions),
   }), 'dsh-web-review: /webview-browser-input route')
   ctx.effect(
     () => ctx.webServer.register({
@@ -165,6 +171,7 @@ async function jsonBody(req: IncomingMessage): Promise<unknown> {
 function previewSessionsHandler(
   server: IsolatedPreviewServer,
   browserSessions: BrowserPreviewSessions,
+  nativeSessions: NativeBrowserSessions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE
@@ -189,7 +196,9 @@ function previewSessionsHandler(
     }
     if (req.method === 'POST') {
       const record = exactRecord(value, ['target']) ?? exactRecord(value, ['target', 'mode'])
-      const mode = record?.mode === 'browser' ? 'browser' : record?.mode === undefined ? 'proxy' : undefined
+      const mode = record?.mode === 'browser' || record?.mode === 'native'
+        ? record.mode
+        : record?.mode === undefined ? 'proxy' : undefined
       if (record === undefined || mode === undefined || typeof record.target !== 'string'
         || record.target.length > 4_096 || !isPreviewableUrl(record.target)) {
         res.writeHead(400, { 'cache-control': 'no-store' })
@@ -199,7 +208,9 @@ function previewSessionsHandler(
       try {
         const descriptor = mode === 'browser'
           ? await browserSessions.create(record.target, origin)
-          : server.createSession(record.target, origin)
+          : mode === 'native'
+            ? await nativeSessions.create(record.target, origin)
+            : server.createSession(record.target, origin)
         if (descriptor === undefined) {
           res.writeHead(503, { 'cache-control': 'no-store' })
           res.end('browser preview unavailable')
@@ -226,6 +237,7 @@ function previewSessionsHandler(
       }
       server.releaseSessions(record.sessionIds as PreviewSessionId[])
       await browserSessions.release(record.sessionIds as PreviewSessionId[])
+      await nativeSessions.release(record.sessionIds as PreviewSessionId[])
       res.writeHead(204, { 'cache-control': 'no-store' })
       res.end()
       return
@@ -248,6 +260,7 @@ function previewSessionsHandler(
  */
 function browserStreamHandler(
   sessions: BrowserPreviewSessions,
+  nativeSessions: NativeBrowserSessions,
 ): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     if (req.method !== 'GET') {
@@ -287,9 +300,9 @@ function browserStreamHandler(
       if (closed || res.writableEnded) return
       res.write(chunk)
     }
-    const unsubscribe = sessions.subscribe(sessionId, channel, (event) => {
-      write(`data: ${JSON.stringify(event)}\n\n`)
-    })
+    const emit = (event: unknown): void => { write(`data: ${JSON.stringify(event)}\n\n`) }
+    const unsubscribe = sessions.subscribe(sessionId, channel, emit)
+      ?? nativeSessions.subscribe(sessionId, channel, emit)
     if (unsubscribe === undefined) {
       write(`data: ${JSON.stringify({ type: 'error', message: 'preview session not found' })}\n\n`)
       closed = true
@@ -317,6 +330,7 @@ function browserStreamHandler(
  */
 function browserInputHandler(
   sessions: BrowserPreviewSessions,
+  nativeSessions: NativeBrowserSessions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     if (req.method !== 'POST') {
@@ -349,7 +363,11 @@ function browserInputHandler(
       res.end('invalid browser input')
       return
     }
-    const result = await sessions.dispatch(request)
+    const owned = await sessions.dispatch(request)
+    // A native session is not known to the browser manager, which answers 404.
+    const result = owned.ok || owned.status !== 404
+      ? owned
+      : await nativeSessions.dispatch(request)
     if (!result.ok) {
       res.writeHead(result.status, { 'cache-control': 'no-store' })
       res.end(result.message)
@@ -359,7 +377,8 @@ function browserInputHandler(
       'cache-control': 'no-store',
       'content-type': 'application/json; charset=utf-8',
     })
-    res.end(JSON.stringify(result.screenshot === undefined ? { ok: true } : { ok: true, screenshot: result.screenshot }))
+    const screenshot = 'screenshot' in result ? result.screenshot : undefined
+    res.end(JSON.stringify(screenshot === undefined ? { ok: true } : { ok: true, screenshot }))
   }
 }
 

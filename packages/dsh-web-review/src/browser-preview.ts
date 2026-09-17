@@ -417,6 +417,8 @@ export class BrowserPreviewSessions {
       await session.page.input('Input.insertText', { text: input.text })
       return
     }
+    // A `bounds` input belongs to the native panel transport.
+    if (input.kind !== 'viewport') return
     session.width = Math.round(input.width)
     session.height = Math.round(input.height)
     session.deviceScaleFactor = input.deviceScaleFactor

@@ -55,6 +55,8 @@ interface BridgeConfig {
   parentOrigin: string
   pageUrl: string
   targetOrigin: string
+  /** Present when the host renders this page in the desktop shell's own panel. */
+  native?: { endpoint: string }
 }
 
 declare global {
@@ -88,6 +90,13 @@ const configOf = (value: unknown): BridgeConfig | undefined => {
     const parent = new URL(record.parentOrigin)
     const page = new URL(record.pageUrl)
     if (parent.origin !== record.parentOrigin || page.origin !== record.targetOrigin) return undefined
+    if (record.native !== undefined) {
+      const native = record.native as { endpoint?: unknown }
+      if (typeof native !== 'object' || native === null) return undefined
+      if (typeof native.endpoint !== 'string') return undefined
+      const endpoint = new URL(native.endpoint)
+      if (endpoint.protocol !== 'http:' || endpoint.hostname !== '127.0.0.1') return undefined
+    }
   } catch {
     return undefined
   }
@@ -199,6 +208,20 @@ function deliver(message: PreviewFrameEventMessage | PreviewFrameResponseMessage
   const send = (window as unknown as { __dshWebReviewSend?: unknown }).__dshWebReviewSend
   if (typeof send === 'function') {
     (send as (payload: string) => void)(JSON.stringify(message))
+    return
+  }
+  // A native shell panel has no parent frame and no injected binding: the host
+  // names a loopback endpoint it owns. `no-cors` keeps it a simple request.
+  const native = config.native
+  if (native !== undefined) {
+    try {
+      void fetch(native.endpoint, {
+        method: 'POST',
+        mode: 'no-cors',
+        body: JSON.stringify(message),
+        keepalive: true,
+      })
+    } catch { /* a dropped bridge message must not break the page */ }
     return
   }
   Reflect.apply(nativePostMessage, parent, [message, config.parentOrigin])

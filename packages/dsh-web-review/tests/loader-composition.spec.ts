@@ -921,3 +921,182 @@ describe('browser preview input and frame resolution', () => {
     90_000,
   )
 })
+
+describe('native panel transport (fake shell + real composition)', () => {
+  interface ShellCall { path: string; body: Record<string, unknown> }
+
+  /** Stand-in for the desktop shell's loopback control API. */
+  const startFakeShell = async (): Promise<{ port: number; calls: ShellCall[]; close: () => Promise<void> }> => {
+    const calls: ShellCall[] = []
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8')
+        let body: Record<string, unknown> = {}
+        try { body = raw === '' ? {} : JSON.parse(raw) as Record<string, unknown> } catch { /* ignore */ }
+        const path = (req.url ?? '').split('?')[0] ?? ''
+        if (path === '/health') {
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, product: 'fake-shell', version: 'test' }))
+          return
+        }
+        calls.push({ path, body })
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end('{"ok":true}')
+      })
+    })
+    await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve) })
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('fake shell failed to bind')
+    return {
+      port: address.port,
+      calls,
+      close: () => new Promise<void>((resolve) => { server.close(() => { resolve() }) }),
+    }
+  }
+
+  const withHome = async <T,>(home: string, body: () => Promise<T>): Promise<T> => {
+    const previous = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      return await body()
+    } finally {
+      if (previous === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previous
+    }
+  }
+
+  const post = (host: string, body: unknown): Promise<Response> => fetch(`${host}${PREVIEW_BROWSER_INPUT_PATH}`, {
+    method: 'POST',
+    headers: {
+      origin: host,
+      'content-type': 'application/json',
+      [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+    },
+    body: JSON.stringify(body),
+  })
+
+  it('drives the shell panel and carries page events back over the stream', async () => {
+    const shell = await startFakeShell()
+    const home = await mkdtemp(join(tmpdir(), 'dsh-web-review-native-'))
+    await mkdir(join(home, 'web-review'), { recursive: true })
+    await writeFile(
+      join(home, 'web-review', 'native-browser.json'),
+      JSON.stringify({ schema: 1, port: shell.port, capabilities: ['browser-panel'], version: 'test' }),
+    )
+    try {
+      await withHome(home, async () => {
+        await loadComposition()
+        const host = `http://127.0.0.1:${String(port)}`
+        const created = await fetch(`${host}${PREVIEW_SESSIONS_PATH}`, {
+          method: 'POST',
+          headers: {
+            origin: host,
+            'content-type': 'application/json',
+            [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+          },
+          body: JSON.stringify({ target: `${fixtureUrl}/`, mode: 'native' }),
+        })
+        expect(created.status).toBe(201)
+        const descriptor = previewSessionDescriptorOf(await created.json() as unknown)
+        if (descriptor === undefined) throw new Error('invalid native descriptor')
+        expect(descriptor.mode).toBe('native')
+        // Registering a session alone must not open a panel.
+        expect(shell.calls).toHaveLength(0)
+
+        const stream = await fetch(
+          `${host}${PREVIEW_BROWSER_STREAM_PATH}?sessionId=${descriptor.sessionId}&channel=${descriptor.channel}`,
+        )
+        const session = { sessionId: descriptor.sessionId, channel: descriptor.channel }
+
+        // The first visible rectangle is what opens the panel.
+        expect((await post(host, {
+          ...session,
+          input: { kind: 'bounds', x: 10, y: 20, width: 800, height: 600, visible: true },
+        })).status).toBe(200)
+        const opened = shell.calls.find(call => call.path === '/panel/open')
+        expect(opened?.body.url).toBe(`${fixtureUrl}/`)
+        expect(Number(opened?.body.width)).toBe(800)
+        const bootstrap = String(opened?.body.bootstrap)
+        expect(bootstrap).toContain('__DSH_WEB_REVIEW_BRIDGE_CONFIG__')
+        // The config names the native transport the bridge artifact selects.
+        expect(bootstrap).toContain('"native":{"endpoint":"http://127.0.0.1:')
+
+        // The bootstrap names the loopback endpoint the page reports to.
+        const endpoint = /http:\/\/127\.0\.0\.1:\d+\/native-event\?sessionId=[a-f\d]{32}&channel=[a-f\d]{32}/u.exec(bootstrap)?.[0]
+        if (endpoint === undefined) throw new Error('bootstrap has no native endpoint')
+
+        // The shell only moves the panel after it exists.
+        await post(host, { ...session, input: { kind: 'bounds', x: 11, y: 21, width: 801, height: 601, visible: true } })
+        expect(shell.calls.some(call => call.path === '/panel/bounds')).toBe(true)
+        await post(host, { ...session, input: { kind: 'bounds', x: 11, y: 21, width: 801, height: 601, visible: false } })
+        const hidden = shell.calls.filter(call => call.path === '/panel/bounds').at(-1)
+        expect(hidden?.body.visible).toBe(false)
+
+        // A page inside the panel reports over its own loopback endpoint.
+        const bridgeMessage = JSON.stringify({ channel: descriptor.channel, event: { name: 'ready', payload: null } })
+        expect((await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'text/plain' },
+          body: JSON.stringify({ type: 'bridge', payload: bridgeMessage }),
+        })).status).toBe(204)
+        await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'text/plain' },
+          body: JSON.stringify({ type: 'state', url: `${fixtureUrl}/typed`, title: '来自面板', loading: false }),
+        })
+        const events = await readSseEvents(stream, collected => (
+          collected.some(event => event.type === 'bridge') && collected.some(event => event.type === 'state' && event.title === '来自面板')
+        ))
+        expect(events.find(event => event.type === 'bridge')?.payload).toBe(bridgeMessage)
+        // The stream opens with the session's own state; the page's report follows.
+        expect(events.filter(event => event.type === 'state').map(event => event.url))
+          .toEqual([`${fixtureUrl}/`, `${fixtureUrl}/typed`])
+
+        // Host commands reach the panel through the shell's eval path.
+        expect((await post(host, {
+          ...session,
+          command: { name: 'bridge', payload: bridgeMessage },
+        })).status).toBe(200)
+        const evalCall = shell.calls.filter(call => call.path === '/panel/command').at(-1)
+        expect(evalCall?.body.kind).toBe('eval')
+        expect(String(evalCall?.body.script)).toContain('__dshWebReviewReceive')
+
+        expect((await post(host, { ...session, command: { name: 'close' } })).status).toBe(200)
+        expect(shell.calls.filter(call => call.path === '/panel/command').at(-1)?.body.kind).toBe('close')
+      })
+    } finally {
+      await shell.close()
+      await rm(home, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('refuses a stale descriptor whose shell is gone', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-web-review-stale-'))
+    await mkdir(join(home, 'web-review'), { recursive: true })
+    // Port 1 is reserved and never answers a health probe.
+    await writeFile(
+      join(home, 'web-review', 'native-browser.json'),
+      JSON.stringify({ schema: 1, port: 1, capabilities: ['browser-panel'] }),
+    )
+    try {
+      await withHome(home, async () => {
+        await loadComposition()
+        const host = `http://127.0.0.1:${String(port)}`
+        const created = await fetch(`${host}${PREVIEW_SESSIONS_PATH}`, {
+          method: 'POST',
+          headers: {
+            origin: host,
+            'content-type': 'application/json',
+            [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+          },
+          body: JSON.stringify({ target: `${fixtureUrl}/`, mode: 'native' }),
+        })
+        expect(created.status).toBe(503)
+      })
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  }, 30_000)
+})

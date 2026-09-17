@@ -106,9 +106,10 @@ export type PreviewElementHandle = string & { readonly [previewElementHandleBran
 /**
  * `proxy` renders the target through the isolated loopback HTTP proxy;
  * `browser` drives a real Chromium page, so the page keeps its true Origin,
- * cookies, service workers, and WebSockets.
+ * cookies, service workers, and WebSockets; `native` renders it in the desktop
+ * shell's own WKWebView panel, which needs no stream and no input forwarding.
  */
-export type PreviewSessionMode = 'proxy' | 'browser'
+export type PreviewSessionMode = 'proxy' | 'browser' | 'native'
 
 export interface PreviewSessionDescriptor {
   sessionId: PreviewSessionId
@@ -290,7 +291,9 @@ export function previewSessionDescriptorOf(value: unknown): PreviewSessionDescri
   ])) return undefined
   const sessionId = sessionIdOf(record.sessionId)
   const channel = channelOf(record.channel)
-  const mode = record.mode === 'proxy' || record.mode === 'browser' ? record.mode : undefined
+  const mode = record.mode === 'proxy' || record.mode === 'browser' || record.mode === 'native'
+    ? record.mode
+    : undefined
   const frameUrl = boundedString(record.frameUrl, 32_768, false)
   const frameOrigin = boundedString(record.frameOrigin, 2_048, false)
   const targetOrigin = boundedString(record.targetOrigin, 2_048, false)
@@ -300,7 +303,7 @@ export function previewSessionDescriptorOf(value: unknown): PreviewSessionDescri
     if (new URL(targetOrigin).origin !== targetOrigin) return undefined
     const url = new URL(frameUrl)
     if (url.username !== '' || url.password !== '') return undefined
-    if (mode === 'browser') {
+    if (mode === 'browser' || mode === 'native') {
       // A browser session serves nothing itself: `frameUrl` is the live page
       // address and `frameOrigin` is the DSH host Origin that owns the stream.
       if (!isPreviewableUrl(url.href) || url.origin !== targetOrigin) return undefined
@@ -365,6 +368,17 @@ export interface PreviewBrowserTextInput {
   text: string
 }
 
+/** Place the native panel over the surface element it stands for. */
+export interface PreviewBrowserBoundsInput {
+  kind: 'bounds'
+  x: number
+  y: number
+  width: number
+  height: number
+  /** False hides the panel without destroying it (a hidden tab, or scrolled away). */
+  visible: boolean
+}
+
 /** Resize the emulated viewport to the panel surface. */
 export interface PreviewBrowserViewportInput {
   kind: 'viewport'
@@ -379,10 +393,11 @@ export type PreviewBrowserInput =
   | PreviewBrowserKeyInput
   | PreviewBrowserTextInput
   | PreviewBrowserViewportInput
+  | PreviewBrowserBoundsInput
 
 /** Commands the panel can issue against one browser session. */
 export interface PreviewBrowserCommand {
-  name: 'reload' | 'navigate' | 'back' | 'forward' | 'screenshot' | 'bridge'
+  name: 'reload' | 'navigate' | 'back' | 'forward' | 'screenshot' | 'bridge' | 'close'
   url?: string
   /** JSON-encoded host bridge message, used by the `bridge` command. */
   payload?: string
@@ -451,6 +466,15 @@ function inputOf(value: unknown): PreviewBrowserInput | undefined {
     const text = boundedString(record.text, PREVIEW_BROWSER_LIMITS.text, false)
     return text === undefined ? undefined : { kind: 'text', text }
   }
+  if (record.kind === 'bounds') {
+    const x = boundedNumber(record.x, PREVIEW_BROWSER_LIMITS.coordinate)
+    const y = boundedNumber(record.y, PREVIEW_BROWSER_LIMITS.coordinate)
+    const width = boundedNumber(record.width, 20_000)
+    const height = boundedNumber(record.height, 20_000)
+    if (x === undefined || y === undefined || width === undefined || height === undefined) return undefined
+    if (typeof record.visible !== 'boolean' || width < 0 || height < 0) return undefined
+    return { kind: 'bounds', x, y, width, height, visible: record.visible }
+  }
   if (record.kind === 'viewport') {
     const width = boundedNumber(record.width, 20_000)
     const height = boundedNumber(record.height, 20_000)
@@ -484,7 +508,7 @@ export function previewBrowserRequestOf(value: unknown): PreviewBrowserRequest |
   if (commandRecord === undefined) return undefined
   const name = commandRecord.name
   if (name !== 'reload' && name !== 'navigate' && name !== 'back' && name !== 'forward'
-    && name !== 'screenshot' && name !== 'bridge') {
+    && name !== 'screenshot' && name !== 'bridge' && name !== 'close') {
     return undefined
   }
   if (name === 'bridge') {
