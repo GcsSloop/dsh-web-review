@@ -176,6 +176,18 @@ capsule visible for retry.
 - Page URL/title, selectors, DOM snapshots, and framework anchors remain
   explicitly untrusted page evidence. The bridge isolates DSH capabilities; it
   does not turn page-authored metadata into authenticated facts.
+- **Real-browser transport (default):** previews open a real Chromium page over
+  the Chrome DevTools Protocol instead of proxying one, so the page keeps its
+  true Origin, cookie jar, service workers, and WebSockets. The panel draws the
+  screencast stream on a canvas, forwards input, and runs the same picker,
+  editor, and snapshot bridge injected into the page. `browserPreview: false`
+  keeps a deployment on the isolated proxy, and a machine without a usable
+  Chromium falls back automatically. `browserProfileDir` keeps logins between
+  restarts; `browserExecutable`, `browserHeadless`, `browserViewportWidth`, and
+  `browserViewportHeight` tune the launch.
+- **Right Sidebar tab:** when the DSH right Sidebar is mounted, the plugin also
+  registers a `网页预览` page tab there, so the surface can live beside the
+  conversation. Annotation stays in the conversation-view tab.
 - **Target cookies:** `previewCookies` (default on) carries cookies for the
   session's target Origin, so login-gated pages can be signed in from inside
   Preview. Cookies are captured per target Origin, replayed upstream, and never
