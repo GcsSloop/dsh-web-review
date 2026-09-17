@@ -790,6 +790,51 @@ describe('PreviewTabBody', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not loop when the transport keeps failing and props change identity', async () => {
+    // The host hands the body a fresh create call and translate seat on every
+    // render. Depending on them made each render start (and cancel) another
+    // attempt, so a failing transport flickered "starting preview" forever.
+    const store = createWebviewStore().create()
+    const attempts: string[] = []
+    let renders = 0
+    function Unstable() {
+      renders += 1
+      const state = hookFor(store)((value: WebviewState) => value)
+      void state
+      return (
+        <PreviewTabBody
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          {...({} as any)}
+          useStore={hookFor(store)}
+          actions={store.actions}
+          useSession={sessionSource().useSession}
+          useInput={((selector: (value: unknown) => unknown) => selector({ draft: '', phase: 'plain' })) as never}
+          inputActions={{ setDraft: vi.fn(), submit: vi.fn() }}
+          useTabInfo={() => ({ tab: { id: 'unstable', visible: true, navigation: { address: '', params: {}, revision: 0 } } })}
+          sendAnnotationsWithoutDraft={vi.fn(async () => {})}
+          createPreviewSession={((_target: string, mode?: PreviewSessionMode) => {
+            attempts.push(String(mode))
+            return Promise.reject(Object.assign(new Error('unavailable'), { status: 503 }))
+          }) as never}
+          releasePreviewSessions={vi.fn(async () => {}) as never}
+          t={((key: string) => zh[key as WebviewKey] ?? key) as never}
+        />
+      )
+    }
+    render(<Unstable />)
+    await act(async () => { store.actions.setUrl('http://localhost:5173/') })
+    // Force the extra renders a live host produces.
+    for (let index = 0; index < 6; index += 1) {
+      await act(async () => { store.actions.setTitle(`render ${String(index)}`) })
+    }
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)) })
+
+    // native -> browser -> proxy, then stop: no runaway retry loop.
+    expect(attempts).toEqual(['native', 'browser', 'proxy'])
+    expect(renders).toBeGreaterThan(1)
+    expect(screen.getByRole('alert').textContent).toContain(zh['panel.previewUnavailable'])
+  })
+
   it('falls back to the next transport instead of sitting on the starting notice', async () => {
     const seen: string[] = []
     const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', {}, undefined, '', (target, mode) => {

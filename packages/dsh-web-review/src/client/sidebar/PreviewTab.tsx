@@ -113,6 +113,14 @@ function previewTabTitle(address: string): string {
 const PREVIEW_TAB_NS = 'webview'
 /** The page keeps at least this much of the pane while the annotation sheet is open. */
 const MIN_PAGE_HEIGHT = 140
+/**
+ * Attempts one address may spend on transport fallback.
+ *
+ * The ladder itself is bounded (three transports), and a page reload or a new
+ * address resets the count; this only stops a failing chain from retrying
+ * forever if some new trigger appears.
+ */
+const MAX_PREVIEW_ATTEMPTS = 6
 
 /**
  * One live preview session per tab, held outside React.
@@ -411,6 +419,19 @@ export function PreviewTabBody({
   const promptErrorAtSend = useRef(promptError)
   const stateRef = useRef(state)
   stateRef.current = state
+  /**
+   * The injected create call and the translate seat arrive as fresh closures on
+   * every render. Depending on them directly made the creation effect re-run
+   * after each render — invalidating the attempt it had just started — so a
+   * failing transport flickered "starting preview" forever without ever
+   * adopting a session. The effect depends on the address and the mode only.
+   */
+  const createSessionRef = useRef(createPreviewSession)
+  createSessionRef.current = createPreviewSession
+  const translateRef = useRef(t)
+  translateRef.current = t
+  /** Attempts spent on the current address, so no failure can loop. */
+  const attemptsRef = useRef({ key: '', count: 0 })
   const tabVisibleRef = useRef(true)
   tabVisibleRef.current = tabVisible
   const actionsRef = useRef(actions)
@@ -597,9 +618,18 @@ export function PreviewTabBody({
       return
     }
     loadedPageUrl.current = state.url
-    setLoading(true)
     const mode = preferredMode
-    void createPreviewSession(state.url, mode).then((next) => {
+    const attemptKey = `${state.url}|${String(previewRequestRevision)}`
+    if (attemptsRef.current.key !== attemptKey) attemptsRef.current = { key: attemptKey, count: 0 }
+    attemptsRef.current.count += 1
+    if (attemptsRef.current.count > MAX_PREVIEW_ATTEMPTS) {
+      setLoading(false)
+      setErrorDetail(`${mode} gave up after ${String(MAX_PREVIEW_ATTEMPTS)} attempts`)
+      actionsRef.current.setError(translateRef.current('panel.previewUnavailable'))
+      return
+    }
+    setLoading(true)
+    void createSessionRef.current(state.url, mode).then((next) => {
       if (!mounted.current || request !== sessionRequest.current) {
         release([next.sessionId])
         return
@@ -628,9 +658,12 @@ export function PreviewTabBody({
       }
       loadedPageUrl.current = null
       setErrorDetail(`${mode} ${timedOut ? 'timed out' : String(status ?? 'failed')}`)
-      actionsRef.current.setError(t('panel.previewUnavailable'))
+      actionsRef.current.setError(translateRef.current('panel.previewUnavailable'))
     })
-  }, [state.url, previewRequestRevision, createPreviewSession, t, preferredMode, tabKey])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs above exist
+    // exactly so the fresh closures of `createPreviewSession` and `t` cannot
+    // re-run this effect.
+  }, [state.url, previewRequestRevision, preferredMode, tabKey])
 
   useEffect(() => {
     if (descriptor === null) return
