@@ -28,6 +28,8 @@ export interface Config {
    * login-gated pages can render. Cookies stay bound to their target Origin.
    */
   previewCookies: boolean
+  /** Open previews in a real Chromium page; false keeps the isolated HTTP proxy. */
+  browserPreview: boolean
   /** Browser executable for browser-mode previews; empty probes Chrome/Chromium. */
   browserExecutable: string
   /** Persistent browser profile directory; empty uses `<DSH_HOME>/web-review/browser-profile`. */
@@ -56,6 +58,7 @@ export const Config: Schema<Config> = z.object({
   autoLoadSkills: z.array(uiSkillName)
     .default([...DEFAULT_AUTO_LOAD_SKILLS]),
   previewCookies: z.boolean().default(true),
+  browserPreview: z.boolean().default(true),
   browserExecutable: z.string().default(''),
   browserProfileDir: z.string().default(''),
   browserHeadless: z.boolean().default(true),

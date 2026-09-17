@@ -72,6 +72,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   })
   const livePreviewServer = previewServer
   const browserSessions = BrowserPreviewSessions.create({
+    enabled: config.browserPreview,
     executable: config.browserExecutable,
     profileDir: config.browserProfileDir,
     headless: config.browserHeadless,

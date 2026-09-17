@@ -42,6 +42,7 @@ import type {
   PreviewElementTarget,
   PreviewSessionDescriptor,
   PreviewSessionId,
+  PreviewSessionMode,
   PreviewTreeNode,
 } from '../preview-contract.ts'
 import type { PickItem } from './contract.ts'
@@ -57,8 +58,10 @@ import type { FloatingEditorPosition, FloatingEditorSize } from './floating-posi
 import { readEditorSize, writeEditorSize } from './editor-size-memory.ts'
 import {
   PreviewBridgeClient,
+  iframeCarrier,
   type PreviewReadyState,
 } from './preview-bridge.ts'
+import { BrowserPreviewSurface } from './browser-surface.ts'
 import css from './WebviewView.module.css'
 
 /** Full composed props: runtime + store + locale shares. */
@@ -72,7 +75,7 @@ export type WebviewSlotProps =
 export interface WebviewViewInjected {
   sendAnnotationsWithoutDraft: () => Promise<void>
   returnToChat: () => void
-  createPreviewSession: (target: string) => Promise<PreviewSessionDescriptor>
+  createPreviewSession: (target: string, mode?: PreviewSessionMode) => Promise<PreviewSessionDescriptor>
   releasePreviewSessions: (sessionIds: readonly PreviewSessionId[]) => Promise<void>
 }
 
@@ -126,8 +129,12 @@ export function WebviewView({
   const actionsRef = useRef(actions)
   actionsRef.current = actions
   const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const surfaceRef = useRef<BrowserPreviewSurface | null>(null)
   const bridgeRef = useRef<PreviewBridgeClient | null>(null)
   const [descriptor, setDescriptor] = useState<PreviewSessionDescriptor | null>(null)
+  /** Browser-mode previews fall back to the isolated proxy when no Chromium is available. */
+  const [proxyFallback, setProxyFallback] = useState(false)
   const [previewRequestRevision, setPreviewRequestRevision] = useState(0)
   const sessionRequest = useRef(0)
   const loadedPageUrl = useRef<string | null>(null)
@@ -285,24 +292,53 @@ export function WebviewView({
       return
     }
     loadedPageUrl.current = state.url
-    void createPreviewSession(state.url).then((next) => {
+    const mode = proxyFallback ? 'proxy' : 'browser'
+    void createPreviewSession(state.url, mode).then((next) => {
       if (!mounted.current || request !== sessionRequest.current) {
         release([next.sessionId])
         return
       }
       setDescriptor(next)
-    }).catch(() => {
-      if (mounted.current && request === sessionRequest.current) {
-        loadedPageUrl.current = null
-        actionsRef.current.setError(t('panel.previewUnavailable'))
+    }).catch((error: unknown) => {
+      if (!mounted.current || request !== sessionRequest.current) return
+      // A deployment without a usable Chromium keeps working through the proxy.
+      if (mode === 'browser' && (error as { status?: number }).status === 503) {
+        setProxyFallback(true)
+        return
       }
+      loadedPageUrl.current = null
+      actionsRef.current.setError(t('panel.previewUnavailable'))
     })
-  }, [state.url, previewRequestRevision, createPreviewSession, t])
+  }, [state.url, previewRequestRevision, createPreviewSession, t, proxyFallback])
 
   useEffect(() => {
+    if (descriptor === null) return
+    if (descriptor.mode === 'browser') {
+      const canvas = canvasRef.current
+      if (canvas === null) return
+      const surface = new BrowserPreviewSurface(descriptor, {
+        onState: (browserState) => {
+          // The real browser reports its own address and title, so the toolbar
+          // and the annotation context follow the page without a bridge hop.
+          setHistoryState({ canGoBack: false, canGoForward: false })
+          actionsRef.current.setError(null)
+          actionsRef.current.setTitle(browserState.title)
+          loadedPageUrl.current = browserState.url
+          if (stateRef.current.url !== browserState.url) actionsRef.current.setUrl(browserState.url)
+        },
+        onError: (message) => { actionsRef.current.setError(message) },
+      })
+      surfaceRef.current = surface
+      const detach = surface.attach(canvas)
+      return () => {
+        detach()
+        surface.dispose()
+        if (surfaceRef.current === surface) surfaceRef.current = null
+      }
+    }
     const frame = frameRef.current
-    if (descriptor === null || frame === null) return
-    const bridge = new PreviewBridgeClient(frame, descriptor, {
+    if (frame === null) return
+    const bridge = new PreviewBridgeClient(iframeCarrier(frame), descriptor, {
       onReady: (ready: PreviewReadyState) => {
         setPickerReady(true)
         setHistoryState({ canGoBack: ready.canGoBack, canGoForward: ready.canGoForward })
@@ -418,6 +454,8 @@ export function WebviewView({
   }
 
   const frameSrc = descriptor?.frameUrl
+  const browserMode = descriptor?.mode === 'browser'
+  const surfaceElement: HTMLElement | null = browserMode ? canvasRef.current : frameRef.current
   const pickDisabled = !pickerReady || state.url === ''
   const visibleError = state.annotationSync.status === 'error' ? state.annotationSync.message : state.error
   const inputBusy = input.phase === 'adjudicating' || input.phase === 'submitting'
@@ -592,7 +630,16 @@ export function WebviewView({
       )}
       <div className={css.body} data-webview-preview-body="">
         <div className={css.frameWrap}>
-          {frameSrc !== undefined
+          {frameSrc !== undefined && browserMode
+            ? (
+              <canvas
+                ref={canvasRef}
+                className={css.browserSurface}
+                tabIndex={0}
+                data-webview-browser-surface=""
+              />
+            )
+            : frameSrc !== undefined
             ? (
               <iframe
                 ref={frameRef}
@@ -605,13 +652,13 @@ export function WebviewView({
               />
             )
             : <div className={css.frameOverlay}>{state.url === '' ? t('panel.noUrl') : t('panel.loading')}</div>}
-          {editor !== null && frameRef.current !== null && (
+          {editor !== null && surfaceElement !== null && (
             <AnnotationEditor
               key={`${editor.id}:${editor.target.handle}`}
               id={editor.id}
               target={editor.target}
               tree={editor.tree}
-              frame={frameRef.current}
+              frame={surfaceElement}
               comment={editor.comment}
               changes={editor.originalHandle === editor.target.handle ? editor.existing?.changes ?? [] : []}
               textChange={editor.originalHandle === editor.target.handle ? editor.existing?.textChange ?? null : null}

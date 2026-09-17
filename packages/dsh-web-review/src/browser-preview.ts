@@ -34,6 +34,8 @@ const FRAME_QUALITY = 72
 
 /** Deployment-controlled browser launch options. */
 export interface BrowserPreviewOptions {
+  /** Deployment switch; false keeps every preview on the isolated HTTP transport. */
+  enabled?: boolean
   executable?: string
   profileDir?: string
   headless?: boolean
@@ -199,7 +201,7 @@ export class BrowserPreviewSessions {
    * @returns the session descriptor, or undefined when no browser is available.
    */
   async create(target: string, parentOrigin: string): Promise<PreviewSessionDescriptor | undefined> {
-    if (this.closed) return undefined
+    if (this.closed || this.options.enabled === false) return undefined
     const browser = await this.ensureBrowser()
     if (browser === undefined) return undefined
     if (this.sessions.size >= MAX_SESSIONS) {
@@ -296,6 +298,13 @@ export class BrowserPreviewSessions {
         const entry = history.entries[index]
         if (entry === undefined) return { ok: false, status: 409, message: 'no history entry' }
         await session.page.send('Page.navigateToHistoryEntry', { entryId: entry.id })
+        return { ok: true }
+      }
+      if (command.name === 'bridge') {
+        if (command.payload === undefined) return { ok: false, status: 400, message: 'bridge needs a payload' }
+        await session.page.evaluate(
+          `window.__dshWebReviewReceive && window.__dshWebReviewReceive(${JSON.stringify(command.payload)})`,
+        )
         return { ok: true }
       }
       if (command.name === 'navigate') {

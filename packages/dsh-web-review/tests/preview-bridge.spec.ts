@@ -7,7 +7,7 @@ import {
   type PreviewSessionDescriptor,
   type PreviewSessionId,
 } from '../src/preview-contract.ts'
-import { PreviewBridgeClient } from '../src/client/preview-bridge.ts'
+import { iframeCarrier, PreviewBridgeClient } from '../src/client/preview-bridge.ts'
 
 function descriptor(seed: string): PreviewSessionDescriptor {
   const sessionId = seed.repeat(32).slice(0, 32) as PreviewSessionId
@@ -50,7 +50,7 @@ describe('PreviewBridgeClient trust boundary', () => {
     document.body.appendChild(frame)
     const onReady = vi.fn()
     const onHandoff = vi.fn()
-    const client = new PreviewBridgeClient(frame, first, {
+    const client = new PreviewBridgeClient(iframeCarrier(frame), first, {
       onReady,
       onHandoff,
       onPick: vi.fn(),
@@ -108,7 +108,7 @@ describe('PreviewBridgeClient trust boundary', () => {
     const frame = document.createElement('iframe')
     document.body.appendChild(frame)
     const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => undefined)
-    const client = new PreviewBridgeClient(frame, active, {
+    const client = new PreviewBridgeClient(iframeCarrier(frame), active, {
       onReady: vi.fn(), onHandoff: vi.fn(), onPick: vi.fn(), onCancelPick: vi.fn(),
       onMarkClick: vi.fn(), onTargetGeometry: vi.fn(), onShortcut: vi.fn(), onUnavailable: vi.fn(),
     })

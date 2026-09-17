@@ -66,7 +66,7 @@ export interface AnnotationEditorValue {
 
 interface AnnotationEditorBaseProps {
   id: string
-  frame: HTMLIFrameElement
+  frame: HTMLElement
   comment: string
   changes: readonly AnnotationStyleChange[]
   textChange: AnnotationTextChange | null

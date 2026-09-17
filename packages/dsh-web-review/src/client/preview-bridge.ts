@@ -1,4 +1,10 @@
-/** Parent-side controller for one isolated cross-origin preview iframe. */
+/**
+ * Parent-side controller for one preview page.
+ *
+ * The controller owns the bridge protocol only: the carrier supplies the wire,
+ * so the same picker/editor protocol runs over an iframe's `postMessage` (the
+ * isolated HTTP proxy transport) or over a real browser session's CDP channel.
+ */
 import type { AnnotationStyleChange, AnnotationTextChange } from '../annotation-contract.ts'
 import type { EditableStyleProperty } from '../annotation-properties.ts'
 import {
@@ -27,6 +33,40 @@ interface PendingRequest {
 }
 
 const MAX_BRIDGE_SESSIONS = 64
+
+/**
+ * Wire between this controller and one page.
+ *
+ * `origin` is the exact Origin the host is allowed to address for the message;
+ * a carrier that is not subject to same-origin policy (a browser session
+ * driven over CDP) may ignore it.
+ */
+export interface PreviewCarrier {
+  /** Deliver one host message; false when the page is gone. */
+  post: (message: unknown, origin: string) => boolean
+  /** Subscribe to page-originated messages; returns the disposer. */
+  subscribe: (handler: (message: unknown, origin: string) => void) => () => void
+}
+
+/** Carrier for one same-origin-policy-bound preview iframe. */
+export function iframeCarrier(frame: HTMLIFrameElement): PreviewCarrier {
+  return {
+    post(message, origin) {
+      const target = frame.contentWindow
+      if (target === null) return false
+      target.postMessage(message, origin)
+      return true
+    },
+    subscribe(handler) {
+      const listener = (event: MessageEvent<unknown>): void => {
+        if (event.source !== frame.contentWindow) return
+        handler(event.data, event.origin)
+      }
+      window.addEventListener('message', listener)
+      return () => { window.removeEventListener('message', listener) }
+    },
+  }
+}
 
 export interface PreviewReadyState {
   pageUrl: string
@@ -112,27 +152,29 @@ export class PreviewBridgeClient {
   private requestSequence = 0
   private readyTimer: ReturnType<typeof setTimeout> | undefined
   private disposed = false
+  private readonly unsubscribe: () => void
 
   constructor(
-    private readonly frame: HTMLIFrameElement,
+    private readonly carrier: PreviewCarrier,
     descriptor: PreviewSessionDescriptor,
     private readonly callbacks: PreviewBridgeCallbacks,
   ) {
     this.descriptor = descriptor
     this.sessionIds.add(descriptor.sessionId)
     this.descriptors.set(descriptor.sessionId, descriptor)
-    window.addEventListener('message', this.onMessage)
+    this.unsubscribe = carrier.subscribe((message, origin) => { this.receive(message, origin) })
     this.armReadyTimeout()
   }
 
   get frameUrl(): string { return this.descriptor.frameUrl }
 
-  private readonly onMessage = (event: MessageEvent<unknown>): void => {
-    if (this.disposed || event.source !== this.frame.contentWindow) return
-    const message = previewFrameMessageOf(event.data)
+  /** Handle one carrier-delivered page message. */
+  private receive(data: unknown, origin: string): void {
+    if (this.disposed) return
+    const message = previewFrameMessageOf(data)
     if (message === undefined) return
     const matched = [...this.descriptors.values()].find(descriptor => (
-      event.origin === descriptor.frameOrigin && message.channel === descriptor.channel
+      origin === descriptor.frameOrigin && message.channel === descriptor.channel
     ))
     if (matched === undefined) return
     if (matched.sessionId !== this.descriptor.sessionId) {
@@ -233,11 +275,9 @@ export class PreviewBridgeClient {
   frameLoaded(): void {
     if (this.disposed) return
     this.armReadyTimeout()
-    const target = this.frame.contentWindow
-    if (target === null) return
     for (const descriptor of this.descriptors.values()) {
       this.requestSequence += 1
-      target.postMessage({
+      this.carrier.post({
         protocol: PREVIEW_BRIDGE_PROTOCOL,
         version: PREVIEW_BRIDGE_VERSION,
         channel: descriptor.channel,
@@ -250,8 +290,6 @@ export class PreviewBridgeClient {
 
   private command(command: PreviewBridgeCommand): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error('preview bridge disposed'))
-    const target = this.frame.contentWindow
-    if (target === null) return Promise.reject(new Error('preview frame unavailable'))
     this.requestSequence += 1
     const requestId = `${String(this.requestSequence)}-${Date.now().toString(36)}`
     const message = {
@@ -268,7 +306,11 @@ export class PreviewBridgeClient {
         reject(new Error('preview bridge command timed out'))
       }, 5_000)
       this.pending.set(requestId, { resolve, reject, timer })
-      target.postMessage(message, this.descriptor.frameOrigin)
+      if (!this.carrier.post(message, this.descriptor.frameOrigin)) {
+        this.pending.delete(requestId)
+        clearTimeout(timer)
+        reject(new Error('preview page unavailable'))
+      }
     })
   }
 
@@ -346,7 +388,7 @@ export class PreviewBridgeClient {
   dispose(): PreviewSessionId[] {
     if (this.disposed) return []
     this.disposed = true
-    window.removeEventListener('message', this.onMessage)
+    this.unsubscribe()
     if (this.readyTimer !== undefined) clearTimeout(this.readyTimer)
     this.rejectPending('preview bridge disposed')
     return [...this.sessionIds]

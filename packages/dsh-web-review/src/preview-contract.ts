@@ -324,6 +324,7 @@ export const PREVIEW_BROWSER_LIMITS = {
   url: 4_096,
   coordinate: 200_000,
   delta: 40_000,
+  bridge: 64 * 1024,
 } as const
 
 /** One pointer event forwarded into the browser page. */
@@ -381,8 +382,10 @@ export type PreviewBrowserInput =
 
 /** Commands the panel can issue against one browser session. */
 export interface PreviewBrowserCommand {
-  name: 'reload' | 'navigate' | 'back' | 'forward' | 'screenshot'
+  name: 'reload' | 'navigate' | 'back' | 'forward' | 'screenshot' | 'bridge'
   url?: string
+  /** JSON-encoded host bridge message, used by the `bridge` command. */
+  payload?: string
 }
 
 /** Body of one `POST /webview-browser-input` request. */
@@ -480,8 +483,16 @@ export function previewBrowserRequestOf(value: unknown): PreviewBrowserRequest |
   const commandRecord = recordOf(record.command)
   if (commandRecord === undefined) return undefined
   const name = commandRecord.name
-  if (name !== 'reload' && name !== 'navigate' && name !== 'back' && name !== 'forward' && name !== 'screenshot') {
+  if (name !== 'reload' && name !== 'navigate' && name !== 'back' && name !== 'forward'
+    && name !== 'screenshot' && name !== 'bridge') {
     return undefined
+  }
+  if (name === 'bridge') {
+    const payload = boundedString(commandRecord.payload, PREVIEW_BROWSER_LIMITS.bridge, false)
+    if (payload === undefined || !exactKeys(commandRecord, ['name', 'payload'])) return undefined
+    return exactKeys(record, ['sessionId', 'channel', 'command'])
+      ? { sessionId, channel, command: { name, payload } }
+      : undefined
   }
   if (name === 'navigate') {
     const url = boundedString(commandRecord.url, PREVIEW_BROWSER_LIMITS.url, false)
