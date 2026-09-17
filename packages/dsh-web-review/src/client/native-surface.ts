@@ -90,7 +90,10 @@ export class NativeBrowserSurface {
     } else {
       start()
     }
-    this.recheckTimer = setInterval(() => { this.reportBounds(false) }, RECHECK_INTERVAL_MS)
+    // Forced, not deduplicated: a pane can move without resizing when a
+    // neighbouring column opens or closes, and a ResizeObserver never hears
+    // about that. The panel would keep the old offset and cover what moved.
+    this.recheckTimer = setInterval(() => { this.reportBounds(true) }, RECHECK_INTERVAL_MS)
     return () => {
       this.observer?.disconnect()
       this.observer = null
