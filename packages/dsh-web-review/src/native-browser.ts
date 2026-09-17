@@ -86,6 +86,12 @@ interface NativeSession {
   /** Hidden then closed once its client stops listening (see `watchDetach`). */
   idleTimer: NodeJS.Timeout | undefined
   closeTimer: NodeJS.Timeout | undefined
+  /**
+   * The client asked for this panel to be hidden (its tab went inactive, or the
+   * body unmounted). Such a session is parked on purpose and is never closed for
+   * being quiet: the user is expected to come back to it.
+   */
+  parked: boolean
   opened: boolean
   touchedAt: number
   url: string
@@ -371,6 +377,7 @@ export class NativeBrowserSessions {
       listeners: new Set(),
       idleTimer: undefined,
       closeTimer: undefined,
+      parked: false,
       opened: false,
       touchedAt: Date.now(),
       url: target,
@@ -407,8 +414,12 @@ export class NativeBrowserSessions {
    * A reload of the DSH page destroys the client that owns the preview while this
    * process keeps running, which used to leave the shell's panel drawn over the
    * interface with nothing able to close it. With no listener attached for a
-   * grace period the panel is hidden, and closed outright after a longer one; a
-   * tab switch re-attaches well inside the grace period, so it survives.
+   * grace period the panel is hidden, and closed outright after a longer one.
+   *
+   * A panel the client deliberately hid is only ever parked: its tab is inactive
+   * and the user is coming back, so the page is kept exactly as it was. Only a
+   * session that went quiet without a deliberate hide — the reload case — is
+   * closed, and even then the client rebuilds a session if it ever returns.
    */
   private watchDetach(session: NativeSession): void {
     if (session.listeners.size > 0) {
@@ -425,9 +436,10 @@ export class NativeBrowserSessions {
       void this.hide(session).catch(() => undefined)
     }, PANEL_IDLE_GRACE_MS)
     session.idleTimer.unref?.()
+    if (session.parked) return
     session.closeTimer = setTimeout(() => {
       session.closeTimer = undefined
-      if (session.listeners.size > 0) return
+      if (session.listeners.size > 0 || session.parked) return
       void this.closeIdle(session).catch(() => undefined)
     }, PANEL_IDLE_CLOSE_MS)
     session.closeTimer.unref?.()
@@ -460,6 +472,7 @@ export class NativeBrowserSessions {
   async bounds(id: string, channel: string, bounds: NativePanelBounds): Promise<NativeDispatchResult> {
     const session = this.sessionFor(id, channel)
     if (session === undefined) return { ok: false, status: 404, message: 'preview session not found' }
+    if (!bounds.visible) session.parked = true
     const host = await discoverNativePanel()
     if (host === undefined) return { ok: false, status: 503, message: 'browser panel unavailable' }
     if (!session.opened) {

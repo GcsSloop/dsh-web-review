@@ -79,6 +79,16 @@ export function createWebviewStore() {
         d.picks = d.picks.filter((p) => p.id !== id)
         if (d.picks.length === 0) d.selectedSkills = []
       },
+      /**
+       * Adopt one tab's annotation list wholesale.
+       *
+       * Preview tabs share one session store, so the tab that becomes visible
+       * hands its own picks over and takes them back when the user returns.
+       */
+      setPicks: (d, picks: PickItem[]) => {
+        d.picks = picks
+        if (picks.length === 0) d.selectedSkills = []
+      },
       clearPicks: (d) => {
         d.picks = []
         d.selectedSkills = []

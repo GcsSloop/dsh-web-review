@@ -28,7 +28,11 @@ import {
 } from '../src/preview-contract.ts'
 import { encodeTarget } from '../src/proxy-url.ts'
 import { DraftOverlayBar, type WebviewDockInjected } from '../src/client/DraftOverlayBar.tsx'
-import { PreviewTabBody } from '../src/client/sidebar/PreviewTab.tsx'
+import {
+  PreviewTabBody,
+  previewAddressOf,
+  previewUrlOfAddress,
+} from '../src/client/sidebar/PreviewTab.tsx'
 import type { PickItem } from '../src/client/contract.ts'
 import { zh, type WebviewKey } from '../src/client/locales.ts'
 import { createWebviewStore, type WebviewState, type WebviewStore } from '../src/client/stores.ts'
@@ -274,6 +278,7 @@ function renderView(
   phase: 'plain' | 'adjudicating' | 'claimed' | 'submitting' = 'plain',
   params: Record<string, unknown> = {},
   existing?: ReturnType<WebviewStore['create']>,
+  address = '',
 ) {
   // A remount case (another sidebar tab became active) keeps the session's store.
   const store = existing ?? createWebviewStore().create()
@@ -316,7 +321,7 @@ function renderView(
         tab: {
           id: 'tab-preview',
           visible: true,
-          navigation: { params, revision: 0 },
+          navigation: { address, params, revision: 0 },
         },
       })}
       sendAnnotationsWithoutDraft={sendAnnotationsWithoutDraft}
@@ -740,6 +745,23 @@ describe('PreviewTabBody', () => {
 
   it('navigates from an opener address carried by the tab', async () => {
     const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', { url: 'http://localhost:5173/docs' })
+    await waitFor(() => { expect(store.getSnapshot().url).toBe('http://localhost:5173/docs') })
+    const address = screen.getByPlaceholderText(zh['panel.urlPlaceholder']) as HTMLInputElement
+    expect(address.value).toBe('http://localhost:5173/docs')
+  })
+
+  it('addresses one tab per page, and names it like a browser tab', () => {
+    const page = 'http://localhost:5173/docs?tab=2'
+    const address = previewAddressOf(page)
+    expect(address.startsWith('dsh-resource://web-review/')).toBe(true)
+    expect(previewUrlOfAddress(address)).toBe(page)
+    expect(previewUrlOfAddress('dsh-resource://file/session/s1/notes.md')).toBe('')
+    expect(previewUrlOfAddress('sidebar://web-review-preview')).toBe('')
+  })
+
+  it('opens the page a resource tab names, without opener params', async () => {
+    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', {}, undefined,
+      previewAddressOf('http://localhost:5173/docs'))
     await waitFor(() => { expect(store.getSnapshot().url).toBe('http://localhost:5173/docs') })
     const address = screen.getByPlaceholderText(zh['panel.urlPlaceholder']) as HTMLInputElement
     expect(address.value).toBe('http://localhost:5173/docs')

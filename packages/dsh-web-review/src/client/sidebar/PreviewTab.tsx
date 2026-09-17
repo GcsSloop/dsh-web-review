@@ -72,6 +72,43 @@ import css from './PreviewTab.module.css'
 export const PREVIEW_TAB_ID = 'dsh-web-review/preview'
 /** The kind `openTab` names to open this page type. */
 export const PREVIEW_TAB_KIND = 'web-review-preview'
+/**
+ * Resource address prefix: one preview tab per page, like a browser's tabs.
+ *
+ * A *page* type deduplicates per pane — the host keeps exactly one tab for a
+ * kind — so the preview is registered as a resource type instead, addressed by
+ * the page it shows. Two different addresses are two tabs the user switches
+ * between, and the same address reveals the tab already showing it.
+ */
+export const PREVIEW_ADDRESS_PREFIX = 'dsh-resource://web-review/'
+/** Pages live in the address; the query keeps the readable part out of the path. */
+export function previewAddressOf(url: string): string {
+  return `${PREVIEW_ADDRESS_PREFIX}${encodeURIComponent(url)}`
+}
+
+/** The page a tab address names, when it is one of ours. */
+export function previewUrlOfAddress(address: string): string {
+  if (!address.startsWith(PREVIEW_ADDRESS_PREFIX)) return ''
+  try {
+    return decodeURIComponent(address.slice(PREVIEW_ADDRESS_PREFIX.length))
+  } catch {
+    return ''
+  }
+}
+
+/** Chip label for one preview tab: what a browser tab would show. */
+function previewTabTitle(address: string): string {
+  const url = previewUrlOfAddress(address)
+  if (url === '') return ''
+  try {
+    const parsed = new URL(url)
+    const path = parsed.pathname === '/' ? '' : parsed.pathname
+    const label = `${parsed.host}${path}`
+    return label.length > 42 ? `${label.slice(0, 41)}…` : label
+  } catch {
+    return url.slice(0, 42)
+  }
+}
 /** Locale namespace the host binds for this tab body. */
 const PREVIEW_TAB_NS = 'webview'
 /** The page keeps at least this much of the pane while the annotation sheet is open. */
@@ -87,6 +124,17 @@ const MIN_PAGE_HEIGHT = 140
  */
 const tabSessions = new Map<string, { descriptor: PreviewSessionDescriptor; url: string }>()
 
+/**
+ * Annotation lists per tab, and which tab currently owns the shared store's.
+ *
+ * Every preview tab of a session shares one store, so the visible tab lends its
+ * picks to it and takes them back on the way out: comments made on one page
+ * never appear on another page's markers, and the dock always describes the page
+ * the user is actually looking at.
+ */
+const tabPicks = new Map<string, PickItem[]>()
+let picksOwnerTab: string | null = null
+
 interface GuideEntry {
   order: number
   title: () => string
@@ -96,7 +144,8 @@ interface GuideEntry {
 interface TabDefinition {
   id: string
   kind: string
-  title: () => string
+  title: (address: string) => string
+  patterns?: readonly string[]
   guide?: readonly GuideEntry[]
 }
 
@@ -106,13 +155,15 @@ interface TabRegistryFace {
 
 interface SidebarRightFace {
   openTab: (kind: string, options?: { params?: Record<string, unknown> }) => void
+  /** Present on hosts that own the right column's resource navigation. */
+  openResource?: (address: string, options?: { revealIfOpened?: boolean }) => void
 }
 
 interface SidebarTabInfo {
   tab: {
     id?: unknown
     visible?: boolean
-    navigation: { params: unknown; revision: number }
+    navigation: { address?: unknown; params: unknown; revision: number }
   }
 }
 
@@ -261,7 +312,13 @@ function registerPreviewTab(
   ctx.effect(() => tabs.register({
     id: PREVIEW_TAB_ID,
     kind: PREVIEW_TAB_KIND,
-    title: () => t('panel.frame'),
+    // A resource type: the page lives in the address, so each page gets its own
+    // tab and the strip behaves like a browser's.
+    patterns: [`${PREVIEW_ADDRESS_PREFIX}**`],
+    title: (address: string) => {
+      const label = previewTabTitle(address)
+      return label === '' ? t('panel.frame') : label
+    },
     guide: [{
       order: 40,
       title: () => t('panel.frame'),
@@ -305,6 +362,7 @@ export function PreviewTabBody({
   const promptError = useSession(session => session.promptError)
   const tabVisible = info.tab.visible !== false
   const requestedUrl = paramUrl(info.tab.navigation.params)
+    || previewUrlOfAddress(typeof info.tab.navigation.address === 'string' ? info.tab.navigation.address : '')
   const tabKey = String(info.tab.id ?? 'preview')
   const mountedSession = tabSessions.get(tabKey)
   /** The page this body is showing; it also guards the store's own URL echo. */
@@ -347,6 +405,8 @@ export function PreviewTabBody({
   const promptErrorAtSend = useRef(promptError)
   const stateRef = useRef(state)
   stateRef.current = state
+  const tabVisibleRef = useRef(true)
+  tabVisibleRef.current = tabVisible
   const actionsRef = useRef(actions)
   actionsRef.current = actions
   const onPickRef = useRef<(target: PreviewElementTarget) => void>(() => undefined)
@@ -363,6 +423,25 @@ export function PreviewTabBody({
   const release = (ids: readonly PreviewSessionId[]): void => {
     if (ids.length === 0) return
     void releasePreviewSessions(ids).catch(() => undefined)
+  }
+
+  /**
+   * Forget one dead session and open a fresh one for the address it held.
+   *
+   * The host closes a panel whose client vanished, and a hard-killed shell leaves
+   * sessions behind entirely; either way this body's cached descriptor is a
+   * promise the host will not keep. Recovery is attempted once per session id so
+   * a genuinely broken address fails visibly instead of reloading forever.
+   */
+  const replaceSession = (sessionId: string): void => {
+    if (recoveredSessions.current.has(sessionId)) return
+    recoveredSessions.current.add(sessionId)
+    if (tabSessions.get(tabKey)?.descriptor.sessionId === sessionId) tabSessions.delete(tabKey)
+    // Clearing this is what lets the creation effect run again: the address is
+    // unchanged, so the guard would otherwise treat the dead session as current.
+    loadedPageUrl.current = null
+    setDescriptor(null)
+    setPreviewRequestRevision(value => value + 1)
   }
 
   const closeEditor = (restore: boolean): void => {
@@ -546,9 +625,12 @@ export function PreviewTabBody({
       onReady: (ready: PreviewReadyState) => {
         setPickerReady(true)
         setHistoryState({ canGoBack: ready.canGoBack, canGoForward: ready.canGoForward })
+        loadedPageUrl.current = ready.pageUrl
+        // Only the tab the user is looking at describes the session: another
+        // preview tab's page must not rewrite the dock's context.
+        if (!tabVisibleRef.current) return
         actionsRef.current.setError(null)
         actionsRef.current.setTitle(ready.title)
-        loadedPageUrl.current = ready.pageUrl
         if (stateRef.current.url !== ready.pageUrl) actionsRef.current.setUrl(ready.pageUrl)
         if (editorRef.current !== null) setEditor(null)
         bridge?.syncMarkers(stateRef.current.picks)
@@ -588,26 +670,19 @@ export function PreviewTabBody({
         onState: (nativeState) => {
           setHistoryState({ canGoBack: false, canGoForward: false })
           setLoading(nativeState.loading)
-          actionsRef.current.setError(null)
-          actionsRef.current.setTitle(nativeState.title)
           loadedPageUrl.current = nativeState.url
-          if (stateRef.current.url !== nativeState.url) actionsRef.current.setUrl(nativeState.url)
+          if (tabVisibleRef.current) {
+            actionsRef.current.setError(null)
+            actionsRef.current.setTitle(nativeState.title)
+            if (stateRef.current.url !== nativeState.url) actionsRef.current.setUrl(nativeState.url)
+          }
           if (!nativeState.loading) bridge?.frameLoaded()
         },
-        onError: (message) => {
-          setError(message)
-          // A session from a previous shell run is gone: replace it once, then
-          // leave the failure visible instead of retrying forever.
-          const stale = tabSessions.get(tabKey)
-          if (stale?.descriptor.sessionId === descriptor.sessionId
-            && !recoveredSessions.current.has(descriptor.sessionId)) {
-            recoveredSessions.current.add(descriptor.sessionId)
-            tabSessions.delete(tabKey)
-            loadedPageUrl.current = null
-            setDescriptor(null)
-            setPreviewRequestRevision(value => value + 1)
-          }
-        },
+        onError: (message) => { setError(message) },
+        // The host refused a request because this session is gone: rebuild it,
+        // once per session id, so a parked or expired panel comes back instead
+        // of leaving an empty rectangle behind.
+        onSessionLost: () => { replaceSession(descriptor.sessionId) },
       })
       nativeSurfaceRef.current = surface
       bridge = new PreviewBridgeClient(surface.carrier(), descriptor, callbacks)
@@ -631,10 +706,12 @@ export function PreviewTabBody({
           // follows the page without a bridge hop.
           setHistoryState({ canGoBack: false, canGoForward: false })
           setLoading(browserState.loading)
-          actionsRef.current.setError(null)
-          actionsRef.current.setTitle(browserState.title)
           loadedPageUrl.current = browserState.url
-          if (stateRef.current.url !== browserState.url) actionsRef.current.setUrl(browserState.url)
+          if (tabVisibleRef.current) {
+            actionsRef.current.setError(null)
+            actionsRef.current.setTitle(browserState.title)
+            if (stateRef.current.url !== browserState.url) actionsRef.current.setUrl(browserState.url)
+          }
           // A finished load may be the injected bridge's first chance to answer.
           if (!browserState.loading) bridge?.frameLoaded()
         },
@@ -680,12 +757,37 @@ export function PreviewTabBody({
     nativeSurfaceRef.current?.setVisible(tabVisible)
   }, [tabVisible])
 
+  // Hand the shared annotation list over on a tab change, and take it back on
+  // return: each preview tab keeps its own comments.
+  useEffect(() => {
+    if (!tabVisible) {
+      if (picksOwnerTab === tabKey) {
+        tabPicks.set(tabKey, stateRef.current.picks)
+        picksOwnerTab = null
+      }
+      return
+    }
+    if (picksOwnerTab !== tabKey) {
+      if (picksOwnerTab !== null) tabPicks.set(picksOwnerTab, stateRef.current.picks)
+      picksOwnerTab = tabKey
+      actionsRef.current.setPicks(tabPicks.get(tabKey) ?? [])
+      // The dock must describe the page this tab shows, not the one it replaced.
+      const pageUrl = loadedPageUrl.current
+      if (pageUrl !== null && stateRef.current.url !== pageUrl) actionsRef.current.setUrl(pageUrl)
+    }
+  }, [tabVisible, tabKey])
+
+  // A hidden tab keeps its page alive but owns no markers on screen.
+  useEffect(() => {
+    bridgeRef.current?.syncMarkers(tabVisible ? stateRef.current.picks : [])
+  }, [tabVisible])
+
   const onFrameLoad = (): void => { bridgeRef.current?.frameLoaded() }
 
   useEffect(() => {
     const bridge = bridgeRef.current
     if (bridge === null) return
-    if (state.pickMode) bridge.activate()
+    if (state.pickMode && tabVisibleRef.current) bridge.activate()
     if (!state.pickMode) {
       bridge.deactivate()
       if (editorRef.current !== null) closeEditor(true)
@@ -701,7 +803,7 @@ export function PreviewTabBody({
       bridgeRef.current?.cancelEdit()
       setEditor(null)
     }
-    bridgeRef.current?.syncMarkers(state.picks)
+    if (tabVisibleRef.current) bridgeRef.current?.syncMarkers(state.picks)
   }, [state.pickResetRevision, state.picks])
 
   useEffect(() => {

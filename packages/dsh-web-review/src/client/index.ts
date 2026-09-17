@@ -38,6 +38,7 @@ import {
 import { en, zh, type WebviewKey } from './locales.ts'
 import {
   PREVIEW_TAB_KIND,
+  previewAddressOf,
   registerSidebarPreviewTab,
   type PreviewTabInjected,
 } from './sidebar/PreviewTab.tsx'
@@ -232,9 +233,16 @@ export function apply(ctx: ClientContext): void {
         actions.setTitle('')
         actions.clearPicks()
         ctx.layout.closeDetails()
-        // The right Sidebar owns the preview: this reveals (or opens) its page
-        // tab, which navigates from the address recorded here.
-        ctx.sidebarRight?.openTab(PREVIEW_TAB_KIND, { params: { url: normalized } })
+        // The right Sidebar owns the preview, one tab per page: opening the
+        // same link again reveals the tab already showing it, and a different
+        // page gets its own tab to switch to.
+        const sidebarRight = ctx.sidebarRight
+        if (sidebarRight === undefined) return
+        if (typeof sidebarRight.openResource === 'function') {
+          sidebarRight.openResource(previewAddressOf(normalized))
+          return
+        }
+        sidebarRight.openTab(PREVIEW_TAB_KIND, { params: { url: normalized } })
       },
     }),
   }, DraftOverlayBar))

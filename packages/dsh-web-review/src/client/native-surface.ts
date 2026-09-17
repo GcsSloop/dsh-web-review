@@ -21,6 +21,12 @@ import type { PreviewCarrier } from './preview-bridge.ts'
 export interface NativeSurfaceEvents {
   onState: (state: { url: string; title: string; loading: boolean }) => void
   onError: (message: string) => void
+  /**
+   * A request the host refused because the session no longer exists (404) or its
+   * panel is not open (409). The caller owns the recovery: the session this
+   * surface was built for is gone and a new one has to be created.
+   */
+  onSessionLost?: () => void
 }
 
 /** Panels smaller than this are treated as "not on screen yet". */
@@ -236,7 +242,12 @@ export class NativeBrowserSurface {
         ...body,
       }),
     })
-    if (!response.ok) throw new Error(`preview input rejected (${String(response.status)})`)
+    if (!response.ok) {
+      // 404/409 mean this session is gone (closed, expired, or replaced): the
+      // page can never come back on its own, so the caller must rebuild it.
+      if (response.status === 404 || response.status === 409) this.events.onSessionLost?.()
+      throw new Error(`preview input rejected (${String(response.status)})`)
+    }
     return await response.json() as { screenshot?: string }
   }
 
