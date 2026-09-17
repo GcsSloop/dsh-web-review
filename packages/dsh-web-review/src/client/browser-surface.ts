@@ -47,6 +47,8 @@ export class BrowserPreviewSurface {
   private detachInput: (() => void) | null = null
   private observer: ResizeObserver | null = null
   private readonly bridgeHandlers = new Set<(message: unknown, origin: string) => void>()
+  private stillTimer: ReturnType<typeof setTimeout> | undefined
+  private stillPending = false
   private disposed = false
   private frameSequence = 0
   private drawnSequence = 0
@@ -71,6 +73,7 @@ export class BrowserPreviewSurface {
       this.observer.observe(canvas)
     }
     this.reportViewport()
+    this.scheduleStill()
     return () => {
       this.observer?.disconnect()
       this.observer = null
@@ -128,6 +131,7 @@ export class BrowserPreviewSurface {
         deviceHeight: Number(payload.deviceHeight) || this.metadata.deviceHeight,
       }
       this.draw(String(payload.data))
+      this.scheduleStill()
       return
     }
     if (payload.type === 'bridge') {
@@ -143,15 +147,36 @@ export class BrowserPreviewSurface {
     if (payload.type === 'error') this.events.onError(String(payload.message))
   }
 
-  private draw(data: string): void {
+  /**
+   * The motion stream carries CSS-sized frames, which a retina canvas upscales.
+   * Once motion settles, ask for one device-resolution still and draw it 1:1.
+   */
+  private scheduleStill(): void {
+    if (this.stillTimer !== undefined) clearTimeout(this.stillTimer)
+    this.stillTimer = setTimeout(() => {
+      this.stillTimer = undefined
+      if (this.disposed || this.stillPending) return
+      this.stillPending = true
+      void this.command({ name: 'screenshot' })
+        .then((result) => {
+          if (this.disposed || result.screenshot === undefined) return
+          this.draw(String(result.screenshot), false)
+        })
+        .catch(() => undefined)
+        .finally(() => { this.stillPending = false })
+    }, 220)
+  }
+
+  private draw(data: string, isStreamFrame = true): void {
     const canvas = this.canvas
     if (canvas === null) return
     const sequence = (this.frameSequence += 1)
     const image = new Image()
     image.onload = () => {
-      // Frames can decode out of order; never let an older one overwrite a newer.
-      if (this.disposed || sequence < this.drawnSequence) return
-      this.drawnSequence = sequence
+      // Frames can decode out of order; never let an older one overwrite a newer,
+      // and let a sharp still win over a stream frame decoded after it.
+      if (this.disposed || (isStreamFrame && sequence < this.drawnSequence)) return
+      this.drawnSequence = isStreamFrame ? sequence : this.frameSequence
       const context = canvas.getContext('2d')
       if (context === null) return
       context.drawImage(image, 0, 0, canvas.width, canvas.height)
@@ -175,7 +200,24 @@ export class BrowserPreviewSurface {
     })
   }
 
+  /**
+   * Wire pointer input on the canvas and keyboard input through a hidden sink.
+   *
+   * The canvas never holds keyboard focus itself: a 1px textarea beside it takes
+   * focus on press, so the browser's own IME composition and paste produce the
+   * text that `Input.insertText` forwards. Direct keys travel as key events, and
+   * a printable key is swallowed locally so the two paths cannot double-send.
+   */
   private wireInput(canvas: HTMLCanvasElement): () => void {
+    const sink = document.createElement('textarea')
+    sink.setAttribute('aria-hidden', 'true')
+    sink.tabIndex = -1
+    sink.autocomplete = 'off'
+    sink.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;'
+      + 'border:0;padding:0;margin:0;resize:none;pointer-events:none;'
+    const host = canvas.parentElement ?? canvas
+    host.appendChild(sink)
+
     const point = (event: MouseEvent | WheelEvent): { x: number; y: number } => {
       const rect = canvas.getBoundingClientRect()
       const scaleX = this.metadata.deviceWidth / Math.max(1, rect.width)
@@ -187,7 +229,10 @@ export class BrowserPreviewSurface {
     }
     const mouse = (type: 'move' | 'down' | 'up') => (event: MouseEvent) => {
       const { x, y } = point(event)
-      if (type !== 'move') event.preventDefault()
+      event.preventDefault()
+      // The page's own focused control only receives keys once the sink has
+      // focus, which is what a real browser does when the user clicks.
+      if (type !== 'move') sink.focus({ preventScroll: true })
       void this.send({
         kind: 'mouse',
         type,
@@ -213,12 +258,15 @@ export class BrowserPreviewSurface {
         modifiers: modifiersOf(event),
       })
     }
-    const onKey = (type: 'down' | 'up') => (event: KeyboardEvent) => {
-      const printable = type === 'down' && event.key.length === 1 && !event.ctrlKey && !event.metaKey
-      event.preventDefault()
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.isComposing) return
+      const printable = event.key.length === 1 && !event.ctrlKey && !event.metaKey
+      if (printable || event.key === 'Enter' || event.key === 'Backspace' || event.key === 'Tab') {
+        event.preventDefault()
+      }
       void this.send({
         kind: 'key',
-        type,
+        type: 'down',
         key: event.key,
         code: event.code,
         text: printable ? event.key : '',
@@ -226,22 +274,45 @@ export class BrowserPreviewSurface {
         modifiers: modifiersOf(event),
       })
     }
-    const onKeyDown = onKey('down')
-    const onKeyUp = onKey('up')
+    const onKeyUp = (event: KeyboardEvent): void => {
+      if (event.isComposing) return
+      void this.send({
+        kind: 'key',
+        type: 'up',
+        key: event.key,
+        code: event.code,
+        text: '',
+        windowsVirtualKeyCode: event.keyCode,
+        modifiers: modifiersOf(event),
+      })
+    }
+    // IME commits and pastes arrive as value changes without a forwarded key.
+    const onInput = (event: Event): void => {
+      if ((event as InputEvent).isComposing === true) return
+      const text = sink.value
+      sink.value = ''
+      if (text !== '') void this.send({ kind: 'text', text })
+    }
+    const onCanvasPointer = (): void => { sink.focus({ preventScroll: true }) }
 
     canvas.addEventListener('mousemove', onMove)
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mouseup', onUp)
     canvas.addEventListener('wheel', onWheel, { passive: false })
-    canvas.addEventListener('keydown', onKeyDown)
-    canvas.addEventListener('keyup', onKeyUp)
+    canvas.addEventListener('pointerdown', onCanvasPointer)
+    sink.addEventListener('keydown', onKeyDown)
+    sink.addEventListener('keyup', onKeyUp)
+    sink.addEventListener('input', onInput)
     return () => {
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mouseup', onUp)
       canvas.removeEventListener('wheel', onWheel)
-      canvas.removeEventListener('keydown', onKeyDown)
-      canvas.removeEventListener('keyup', onKeyUp)
+      canvas.removeEventListener('pointerdown', onCanvasPointer)
+      sink.removeEventListener('keydown', onKeyDown)
+      sink.removeEventListener('keyup', onKeyUp)
+      sink.removeEventListener('input', onInput)
+      sink.remove()
     }
   }
 
@@ -275,6 +346,8 @@ export class BrowserPreviewSurface {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    if (this.stillTimer !== undefined) clearTimeout(this.stillTimer)
+    this.stillTimer = undefined
     this.stream?.close()
     this.stream = null
     this.observer?.disconnect()

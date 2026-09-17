@@ -32,7 +32,7 @@ const SESSION_TTL_MS = 60 * 60 * 1_000
 /** Concurrent browser pages; each one is a live renderer process. */
 const MAX_SESSIONS = 8
 /** JPEG quality of the screencast stream. */
-const FRAME_QUALITY = 72
+const FRAME_QUALITY = 85
 
 /** Deployment-controlled browser launch options. */
 export interface BrowserPreviewOptions {
@@ -73,6 +73,10 @@ interface BrowserSession {
   touchedAt: number
   width: number
   height: number
+  /** Device pixel ratio the page renders at; frames are captured at this scale. */
+  deviceScaleFactor: number
+  /** Bit mask of pressed mouse buttons, reported on move events during a drag. */
+  pressedButtons: number
   url: string
   title: string
   loading: boolean
@@ -87,6 +91,9 @@ export function defaultBrowserProfileDir(): string {
 function opaqueId(): string {
   return randomBytes(16).toString('hex')
 }
+
+/** CDP button bit mask for one named button. */
+const BUTTON_MASK = { left: 1, right: 2, middle: 4 } as const
 
 /** One exact-Origin bridge bootstrap for a real browser document. */
 function bridgeBootstrap(session: {
@@ -247,6 +254,8 @@ export class BrowserPreviewSessions {
       touchedAt: Date.now(),
       width: this.options.viewportWidth,
       height: this.options.viewportHeight,
+      deviceScaleFactor: 1,
+      pressedButtons: 0,
       url: target,
       title: '',
       loading: true,
@@ -288,8 +297,8 @@ export class BrowserPreviewSessions {
     if (!session.streaming) {
       session.streaming = true
       void session.page.startScreencast({
-        width: session.width,
-        height: session.height,
+        width: session.width * session.deviceScaleFactor,
+        height: session.height * session.deviceScaleFactor,
         quality: FRAME_QUALITY,
       }).catch((error: unknown) => {
         session.streaming = false
@@ -346,8 +355,15 @@ export class BrowserPreviewSessions {
         await session.page.navigate(command.url)
         return { ok: true }
       }
-      const screenshot = await session.page.screenshot()
-      return { ok: true, screenshot: screenshot.toString('base64') }
+      // A still is captured at the emulated device resolution (the page already
+      // renders at `deviceScaleFactor`), so an idle surface is pixel-sharp even
+      // though the motion stream can only carry CSS-sized frames.
+      const still = await session.page.send('Page.captureScreenshot', {
+        format: 'jpeg',
+        quality: 90,
+        clip: { x: 0, y: 0, width: session.width, height: session.height, scale: 1 },
+      }) as { data: string }
+      return { ok: true, screenshot: still.data }
     } catch (error) {
       return { ok: false, status: 502, message: error instanceof Error ? error.message : 'browser command failed' }
     }
@@ -358,6 +374,9 @@ export class BrowserPreviewSessions {
     input: NonNullable<PreviewBrowserRequest['input']>,
   ): Promise<void> {
     if (input.kind === 'mouse') {
+      session.pressedButtons = input.type === 'down'
+        ? BUTTON_MASK[input.button]
+        : input.type === 'up' ? 0 : session.pressedButtons
       await session.page.input('Input.dispatchMouseEvent', {
         type: input.type === 'move' ? 'mouseMoved' : input.type === 'down' ? 'mousePressed' : 'mouseReleased',
         x: input.x,
@@ -365,7 +384,7 @@ export class BrowserPreviewSessions {
         button: input.button,
         clickCount: input.clickCount,
         modifiers: input.modifiers,
-        buttons: input.type === 'move' ? 0 : 1,
+        buttons: session.pressedButtons,
       })
       return
     }
@@ -381,11 +400,13 @@ export class BrowserPreviewSessions {
       return
     }
     if (input.kind === 'key') {
+      // CDP names the phases keyDown/keyUp/char; the panel speaks down/up/char.
+      const type = input.type === 'down' ? 'keyDown' : input.type === 'up' ? 'keyUp' : 'char'
       await session.page.input('Input.dispatchKeyEvent', {
-        type: input.type,
+        type,
         key: input.key,
         code: input.code,
-        text: input.text === '' ? undefined : input.text,
+        ...(input.text === '' ? {} : { text: input.text, unmodifiedText: input.text }),
         windowsVirtualKeyCode: input.windowsVirtualKeyCode,
         nativeVirtualKeyCode: input.windowsVirtualKeyCode,
         modifiers: input.modifiers,
@@ -398,9 +419,16 @@ export class BrowserPreviewSessions {
     }
     session.width = Math.round(input.width)
     session.height = Math.round(input.height)
+    session.deviceScaleFactor = input.deviceScaleFactor
     await session.page.setViewport(session.width, session.height, input.deviceScaleFactor)
     if (session.streaming) {
-      await session.page.startScreencast({ width: session.width, height: session.height, quality: FRAME_QUALITY })
+      // Capture at device resolution: a CSS-sized frame would be upscaled onto
+      // the panel's retina canvas and read as blur.
+      await session.page.startScreencast({
+        width: session.width * session.deviceScaleFactor,
+        height: session.height * session.deviceScaleFactor,
+        quality: FRAME_QUALITY,
+      })
     }
   }
 

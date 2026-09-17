@@ -77,6 +77,16 @@ beforeAll(async () => {
       res.end(authed ? 'dashboard' : 'unauthorized')
       return
     }
+    if (url.pathname === '/typed') {
+      // This page runs a handler, so it must not inherit the suite's CSP header.
+      res.removeHeader('content-security-policy')
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end('<!doctype html><html><head><title>typed:</title></head>'
+        + '<body style="margin:0"><input id="field" autofocus style="position:fixed;left:0;top:0;'
+        + 'width:600px;height:80px;font-size:32px" '
+        + "oninput=\"document.title='typed:'+this.value\"></body></html>")
+      return
+    }
     if (url.pathname === '/redirect') {
       res.writeHead(302, { location: '/nested/page.html' })
       res.end()
@@ -681,7 +691,9 @@ describe('browser preview transport (real Loader + webserver composition)', () =
       })
       expect(shot.status).toBe(200)
       const captured = await shot.json() as { screenshot?: string }
-      expect(captured.screenshot?.startsWith('iVBOR')).toBe(true)
+      // The still is a device-resolution JPEG.
+      expect(captured.screenshot?.startsWith('/9j/')).toBe(true)
+      expect(jpegSize(String(captured.screenshot))?.width).toBeGreaterThan(0)
 
       expect((await input({ sessionId: descriptor.sessionId, channel: descriptor.channel })).status).toBe(400)
       expect((await input({
@@ -773,6 +785,138 @@ describe('browser preview transport (real Loader + webserver composition)', () =
       const readyState = (ready?.event as { payload?: Record<string, unknown> } | undefined)?.payload
       expect(String(readyState?.pageUrl)).toContain(String(new URL(fixtureUrl).port))
       expect(Number((readyState?.viewport as { width?: number } | undefined)?.width)).toBeGreaterThan(0)
+    },
+    90_000,
+  )
+})
+
+/** Pixel size of a base64 JPEG, read from its start-of-frame marker. */
+function jpegSize(base64: string): { width: number; height: number } | undefined {
+  const bytes = Buffer.from(base64, 'base64')
+  let index = 2
+  while (index + 9 < bytes.length) {
+    if (bytes[index] !== 0xff) { index += 1; continue }
+    const marker = bytes[index + 1]
+    if (marker === undefined) return undefined
+    const length = bytes.readUInt16BE(index + 2)
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { height: bytes.readUInt16BE(index + 5), width: bytes.readUInt16BE(index + 7) }
+    }
+    index += 2 + length
+  }
+  return undefined
+}
+
+describe('browser preview input and frame resolution', () => {
+  const control = (host: string, body: unknown): Promise<Response> => fetch(
+    `${host}${PREVIEW_BROWSER_INPUT_PATH}`,
+    {
+      method: 'POST',
+      headers: {
+        origin: host,
+        'content-type': 'application/json',
+        [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+      },
+      body: JSON.stringify(body),
+    },
+  )
+
+  const createBrowserSession = async (target: string): Promise<{
+    host: string
+    descriptor: PreviewSessionDescriptor
+  }> => {
+    const host = `http://127.0.0.1:${String(port)}`
+    const created = await fetch(`${host}${PREVIEW_SESSIONS_PATH}`, {
+      method: 'POST',
+      headers: {
+        origin: host,
+        'content-type': 'application/json',
+        [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+      },
+      body: JSON.stringify({ target, mode: 'browser' }),
+    })
+    expect(created.status).toBe(201)
+    const descriptor = previewSessionDescriptorOf(await created.json() as unknown)
+    if (descriptor === undefined) throw new Error('invalid browser descriptor')
+    return { host, descriptor }
+  }
+
+  it.skipIf(resolveBrowserExecutable() === undefined)(
+    'focuses a page control and types into it',
+    async () => {
+      await loadComposition({ browserProfileDir: await mkdtemp(join(tmpdir(), 'dsh-web-review-typing-')) })
+      const { host, descriptor } = await createBrowserSession(`${fixtureUrl}/typed`)
+      const session = { sessionId: descriptor.sessionId, channel: descriptor.channel }
+      const stream = await fetch(
+        `${host}${PREVIEW_BROWSER_STREAM_PATH}?sessionId=${descriptor.sessionId}&channel=${descriptor.channel}`,
+      )
+
+      // Press the control, then type: pointer input must give the page's control
+      // focus and key events must reach it as text.
+      expect((await control(host, {
+        ...session,
+        input: { kind: 'mouse', type: 'down', x: 40, y: 40, button: 'left', clickCount: 1, modifiers: 0 },
+      })).status).toBe(200)
+      await control(host, {
+        ...session,
+        input: { kind: 'mouse', type: 'up', x: 40, y: 40, button: 'left', clickCount: 1, modifiers: 0 },
+      })
+      for (const [key, code, virtual] of [['a', 'KeyA', 65], ['b', 'KeyB', 66]] as const) {
+        await control(host, {
+          ...session,
+          input: { kind: 'key', type: 'down', key, code, text: key, windowsVirtualKeyCode: virtual, modifiers: 0 },
+        })
+      }
+      await control(host, {
+        ...session,
+        command: {
+          name: 'bridge',
+          payload: JSON.stringify({
+            protocol: 'dsh-web-review/bridge',
+            version: 1,
+            channel: descriptor.channel,
+            direction: 'host-to-frame',
+            requestId: 'probe-typed',
+            command: { name: 'request-ready', payload: null },
+          }),
+        },
+      })
+
+      const events = await readSseEvents(stream, collected => collected.some((event) => {
+        if (event.type !== 'bridge') return false
+        return String(event.payload).includes('typed:ab')
+      }))
+      const ready = events
+        .filter(event => event.type === 'bridge')
+        .map(event => JSON.parse(String(event.payload)) as { event?: { name?: string; payload?: { title?: string } } })
+        .find(payload => payload.event?.name === 'ready')
+      expect(ready?.event?.payload?.title).toBe('typed:ab')
+    },
+    90_000,
+  )
+
+  it.skipIf(resolveBrowserExecutable() === undefined)(
+    'captures frames at device resolution instead of CSS size',
+    async () => {
+      await loadComposition({ browserProfileDir: await mkdtemp(join(tmpdir(), 'dsh-web-review-scale-')) })
+      const { host, descriptor } = await createBrowserSession(`${fixtureUrl}/typed`)
+      expect((await control(host, {
+        sessionId: descriptor.sessionId,
+        channel: descriptor.channel,
+        input: { kind: 'viewport', width: 800, height: 600, deviceScaleFactor: 2 },
+      })).status).toBe(200)
+
+      const stream = await fetch(
+        `${host}${PREVIEW_BROWSER_STREAM_PATH}?sessionId=${descriptor.sessionId}&channel=${descriptor.channel}`,
+      )
+      const events = await readSseEvents(stream, collected => collected.some(event => event.type === 'frame'))
+      const frame = events.find(event => event.type === 'frame')
+      // The motion stream is CSS-sized; the idle still is device-resolution.
+      expect(jpegSize(String(frame?.data))?.width).toBeLessThanOrEqual(800)
+      expect(Number(frame?.deviceWidth)).toBe(800)
+      const still = await control(host, { sessionId: descriptor.sessionId, channel: descriptor.channel, command: { name: 'screenshot' } })
+      const stillBody = await still.json() as { screenshot?: string }
+      expect(jpegSize(String(stillBody.screenshot))?.width).toBeGreaterThan(1_200)
     },
     90_000,
   )
