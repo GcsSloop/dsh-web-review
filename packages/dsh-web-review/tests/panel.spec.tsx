@@ -25,16 +25,10 @@ import {
   type PreviewHostMessage,
   type PreviewSessionDescriptor,
   type PreviewSessionId,
-  type PreviewSessionMode,
 } from '../src/preview-contract.ts'
 import { encodeTarget } from '../src/proxy-url.ts'
 import { DraftOverlayBar, type WebviewDockInjected } from '../src/client/DraftOverlayBar.tsx'
-import {
-  PreviewTabBody,
-  previewAddressOf,
-  previewUrlOfAddress,
-  resetPreviewTabStateForTest,
-} from '../src/client/sidebar/PreviewTab.tsx'
+import { PreviewTabBody } from '../src/client/sidebar/PreviewTab.tsx'
 import type { PickItem } from '../src/client/contract.ts'
 import { zh, type WebviewKey } from '../src/client/locales.ts'
 import { createWebviewStore, type WebviewState, type WebviewStore } from '../src/client/stores.ts'
@@ -154,7 +148,6 @@ function dispatchLink(link: HTMLAnchorElement, event: MouseEvent): boolean {
 
 const storageValues = new Map<string, string>()
 beforeEach(() => {
-  resetPreviewTabStateForTest()
   storageValues.clear()
   Object.defineProperty(window, 'localStorage', {
     configurable: true,
@@ -253,11 +246,11 @@ function installFrameBridge(options: {
       }))
     })
   })
-  const ready = (canGoBack = false, canGoForward = false, pageUrl = 'http://localhost:5173/'): void => {
+  const ready = (canGoBack = false, canGoForward = false): void => {
     emit({
       name: 'ready',
       payload: {
-        pageUrl,
+        pageUrl: 'http://localhost:5173/',
         title: 'Example Domain',
         viewport: { width: 800, height: 600 },
         canGoBack,
@@ -281,9 +274,6 @@ function renderView(
   phase: 'plain' | 'adjudicating' | 'claimed' | 'submitting' = 'plain',
   params: Record<string, unknown> = {},
   existing?: ReturnType<WebviewStore['create']>,
-  address = '',
-  sessionFactory?: (target: string, mode?: PreviewSessionMode) => Promise<PreviewSessionDescriptor>,
-  visible = true,
 ) {
   // A remount case (another sidebar tab became active) keeps the session's store.
   const store = existing ?? createWebviewStore().create()
@@ -292,7 +282,7 @@ function renderView(
     draft, draftRev: 0, phase, occurrences: [], queue: [], imageIds: [],
   }
   let sessionSequence = 0
-  const createPreviewSession = sessionFactory ?? ((target: string): Promise<PreviewSessionDescriptor> => {
+  const createPreviewSession = (target: string): Promise<PreviewSessionDescriptor> => {
     sessionSequence += 1
     const sessionId = sessionSequence.toString(16).padStart(32, '0') as PreviewSessionId
     const channel = (sessionSequence + 100).toString(16).padStart(32, '0') as PreviewChannel
@@ -312,7 +302,7 @@ function renderView(
         return Promise.resolve(descriptor)
       },
     } as unknown as Promise<PreviewSessionDescriptor>
-  })
+  }
   render(
     <PreviewTabBody
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -325,8 +315,8 @@ function renderView(
       useTabInfo={() => ({
         tab: {
           id: 'tab-preview',
-          visible,
-          navigation: { address, params, revision: 0 },
+          visible: true,
+          navigation: { params, revision: 0 },
         },
       })}
       sendAnnotationsWithoutDraft={sendAnnotationsWithoutDraft}
@@ -377,9 +367,9 @@ describe('PreviewTabBody', () => {
     })
     const input = screen.getByPlaceholderText(zh['panel.urlPlaceholder'])
     fireEvent.change(input, { target: { value: 'http://localhost:5173/' } })
-    // The address bar holds the tab's own draft, not the shared store.
-    expect((input as HTMLInputElement).value).toBe('http://localhost:5173/')
-    expect(store.getSnapshot()).toMatchObject({ url: '', title: 'Old title' })
+    expect(store.getSnapshot()).toMatchObject({
+      url: '', urlDraft: 'http://localhost:5173/', title: 'Old title',
+    })
     expect(store.getSnapshot().picks).toHaveLength(1)
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(store.getSnapshot()).toMatchObject({ title: '', picks: [] })
@@ -755,23 +745,6 @@ describe('PreviewTabBody', () => {
     expect(address.value).toBe('http://localhost:5173/docs')
   })
 
-  it('addresses one tab per page, and names it like a browser tab', () => {
-    const page = 'http://localhost:5173/docs?tab=2'
-    const address = previewAddressOf(page)
-    expect(address.startsWith('dsh-resource://web-review/')).toBe(true)
-    expect(previewUrlOfAddress(address)).toBe(page)
-    expect(previewUrlOfAddress('dsh-resource://file/session/s1/notes.md')).toBe('')
-    expect(previewUrlOfAddress('sidebar://web-review-preview')).toBe('')
-  })
-
-  it('opens the page a resource tab names, without opener params', async () => {
-    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', {}, undefined,
-      previewAddressOf('http://localhost:5173/docs'))
-    await waitFor(() => { expect(store.getSnapshot().url).toBe('http://localhost:5173/docs') })
-    const address = screen.getByPlaceholderText(zh['panel.urlPlaceholder']) as HTMLInputElement
-    expect(address.value).toBe('http://localhost:5173/docs')
-  })
-
   it('asks the host shell to open a link externally, and reports when it cannot', async () => {
     const { openExternalLink } = await import('../src/client/open-external.ts')
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
@@ -791,124 +764,6 @@ describe('PreviewTabBody', () => {
     fetchMock.mockImplementation(async () => { throw new Error('offline') })
     await expect(openExternalLink('http://localhost:5173/')).resolves.toBe(false)
     vi.unstubAllGlobals()
-  })
-
-  it('prepares a hidden tab without describing the shared store', async () => {
-    // A hidden preview tab prepares its own session up front, but never mirrors
-    // its page into the shared store — only the visible tab describes it. The
-    // surface reports invisible bounds, which is what stops two previews from
-    // fighting over the shell's single panel.
-    const calls: string[] = []
-    const factory = (_target: string, mode?: PreviewSessionMode) => {
-      calls.push(String(mode))
-      return Promise.resolve({
-        sessionId: 'a'.repeat(32) as PreviewSessionId,
-        channel: 'b'.repeat(32) as PreviewChannel,
-        mode: 'proxy' as const,
-        frameOrigin: `http://${'a'.repeat(32)}.localhost:43123`,
-        frameUrl: `http://${'a'.repeat(32)}.localhost:43123${PREVIEW_ENTRY_PREFIX}x`,
-        targetOrigin: 'http://localhost:5173',
-      })
-    }
-    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', { url: 'http://localhost:5173/' },
-      undefined, '', factory, false)
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
-    expect(calls).toEqual(['native'])
-    expect(store.getSnapshot().url).toBe('')
-  })
-
-  it('treats a page redirect as the same session, not a navigation', async () => {
-    // A target that 302s (the login redirect) fires ready once per document with
-    // a changing URL. That must update the bar without starting a new session.
-    let created = 0
-    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', {}, undefined, '',
-      (_target) => {
-        created += 1
-        return Promise.resolve({
-          sessionId: 'a'.repeat(32) as PreviewSessionId,
-          channel: 'b'.repeat(32) as PreviewChannel,
-          mode: 'proxy' as const,
-          frameOrigin: `http://${'a'.repeat(32)}.localhost:43123`,
-          frameUrl: `http://${'a'.repeat(32)}.localhost:43123${PREVIEW_ENTRY_PREFIX}x`,
-          targetOrigin: 'http://localhost:5173',
-        })
-      })
-    await act(async () => { store.actions.setUrl('http://localhost:5173/') })
-    const bridge = installFrameBridge()
-    await act(async () => { bridge.ready() })
-    await act(async () => { bridge.ready(false, false, 'http://localhost:5173/login?redirect=/') })
-    await act(async () => { bridge.ready(false, false, 'http://localhost:5173/login?redirect=/') })
-    expect(created).toBe(1)
-  })
-
-  it('does not loop when the transport keeps failing and props change identity', async () => {
-    // The host hands the body a fresh create call and translate seat on every
-    // render. Depending on them made each render start (and cancel) another
-    // attempt, so a failing transport flickered "starting preview" forever.
-    const store = createWebviewStore().create()
-    const attempts: string[] = []
-    let renders = 0
-    function Unstable() {
-      renders += 1
-      const state = hookFor(store)((value: WebviewState) => value)
-      void state
-      return (
-        <PreviewTabBody
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          {...({} as any)}
-          useStore={hookFor(store)}
-          actions={store.actions}
-          useSession={sessionSource().useSession}
-          useInput={((selector: (value: unknown) => unknown) => selector({ draft: '', phase: 'plain' })) as never}
-          inputActions={{ setDraft: vi.fn(), submit: vi.fn() }}
-          useTabInfo={() => ({ tab: { id: 'unstable', visible: true, navigation: { address: '', params: {}, revision: 0 } } })}
-          sendAnnotationsWithoutDraft={vi.fn(async () => {})}
-          createPreviewSession={((_target: string, mode?: PreviewSessionMode) => {
-            attempts.push(String(mode))
-            return Promise.reject(Object.assign(new Error('unavailable'), { status: 503 }))
-          }) as never}
-          releasePreviewSessions={vi.fn(async () => {}) as never}
-          t={((key: string) => zh[key as WebviewKey] ?? key) as never}
-        />
-      )
-    }
-    render(<Unstable />)
-    await act(async () => { store.actions.setUrl('http://localhost:5173/') })
-    // Force the extra renders a live host produces.
-    for (let index = 0; index < 6; index += 1) {
-      await act(async () => { store.actions.setTitle(`render ${String(index)}`) })
-    }
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)) })
-
-    // native -> browser -> proxy, then stop: no runaway retry loop.
-    expect(attempts).toEqual(['native', 'browser', 'proxy'])
-    expect(renders).toBeGreaterThan(1)
-    expect(screen.getByRole('alert').textContent).toContain(zh['panel.previewUnavailable'])
-  })
-
-  it('falls back to the next transport instead of sitting on the starting notice', async () => {
-    const seen: string[] = []
-    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', {}, undefined, '', (target, mode) => {
-      seen.push(String(mode))
-      if (mode === 'native') {
-        return Promise.reject(Object.assign(new Error('panel unavailable'), { status: 503 }))
-      }
-      return Promise.resolve({
-        sessionId: 'f'.repeat(32) as PreviewSessionId,
-        channel: 'e'.repeat(32) as PreviewChannel,
-        mode: 'proxy',
-        frameOrigin: `http://${'f'.repeat(32)}.localhost:43123`,
-        frameUrl: `http://${'f'.repeat(32)}.localhost:43123${PREVIEW_ENTRY_PREFIX}${encodeTarget(target)}`,
-        targetOrigin: new URL(target).origin,
-      })
-    })
-    await act(async () => { store.actions.setUrl('http://localhost:5173/') })
-
-    // Before the fix the retry returned early on the unchanged address and the
-    // pane showed "starting isolated preview" forever.
-    await waitFor(() => { expect(document.querySelector('iframe')).not.toBeNull() })
-    expect(seen).toEqual(['native', 'browser'])
-    expect(document.querySelector('[data-webview-error]')).toBeNull()
   })
 
   it('re-attaches to the live session when its tab body remounts', async () => {
