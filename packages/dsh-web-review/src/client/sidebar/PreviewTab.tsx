@@ -12,6 +12,7 @@ import type { PreviewSessionDescriptor, PreviewSessionMode } from '../../preview
 import type { WebviewKey } from '../locales.ts'
 import { normalizePreviewUrl } from '../navigation-url.ts'
 import { BrowserPreviewSurface } from '../browser-surface.ts'
+import { NativeBrowserSurface } from '../native-surface.ts'
 import { createPreviewSession, releasePreviewSessions } from '../preview-session.ts'
 import css from './PreviewTab.module.css'
 
@@ -120,12 +121,19 @@ export function PreviewTabBody({
   t: (key: WebviewKey) => string
 }) {
   const info = useTabInfo()
+  const tabVisible = (info.tab as { visible?: boolean }).visible !== false
   const requestedUrl = paramUrl(info.tab.navigation.params)
   const [draft, setDraft] = useState(requestedUrl)
   const [descriptor, setDescriptor] = useState<PreviewSessionDescriptor | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [proxyFallback, setProxyFallback] = useState(false)
+  /**
+   * Transport preference, matching the conversation preview: the shell's native
+   * panel first, then a real Chromium over CDP, then the isolated proxy.
+   */
+  const [preferredMode, setPreferredMode] = useState<PreviewSessionMode>('native')
+  const nativeRef = useRef<HTMLDivElement | null>(null)
+  const nativeSurfaceRef = useRef<NativeBrowserSurface | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const surfaceRef = useRef<BrowserPreviewSurface | null>(null)
@@ -146,12 +154,12 @@ export function PreviewTabBody({
       sessionRef.current = next
       setDescriptor(next)
       setDraft(normalized)
-      setProxyFallback(mode === 'proxy')
       if (previous !== null) void releasePreviewSessions([previous.sessionId]).catch(() => undefined)
     } catch (thrown) {
-      if (mode === 'browser' && (thrown as { status?: number }).status === 503) {
-        setProxyFallback(true)
-        return await open(value, 'proxy')
+      if ((thrown as { status?: number }).status === 503) {
+        // native -> browser -> proxy, one step per unavailable transport.
+        if (mode === 'native') { setPreferredMode('browser'); return await open(value, 'browser') }
+        if (mode === 'browser') { setPreferredMode('proxy'); return await open(value, 'proxy') }
       }
       setError(t('panel.previewUnavailable'))
     } finally {
@@ -163,7 +171,7 @@ export function PreviewTabBody({
   useEffect(() => {
     if (requestedUrl === '') return
     setDraft(requestedUrl)
-    void open(requestedUrl, proxyFallback ? 'proxy' : 'browser')
+    void open(requestedUrl, preferredMode)
     // `open` re-reads the live session through a ref, so the URL is the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedUrl])
@@ -174,8 +182,32 @@ export function PreviewTabBody({
     if (current !== null) void releasePreviewSessions([current.sessionId]).catch(() => undefined)
   }, [])
 
+  // A tab body stays mounted while another tab is active: keep the native panel
+  // in step with this tab so it never floats over the tab the user switched to.
+  useEffect(() => {
+    nativeSurfaceRef.current?.setVisible(tabVisible)
+  }, [tabVisible])
+
   useEffect(() => {
     if (descriptor === null) return
+    if (descriptor.mode === 'native') {
+      const placeholder = nativeRef.current
+      if (placeholder === null) return
+      const surface = new NativeBrowserSurface(descriptor, {
+        onState: (nativeState) => {
+          setLoading(nativeState.loading)
+          if (nativeState.url !== '') setDraft(nativeState.url)
+        },
+        onError: (message) => { setError(message) },
+      })
+      nativeSurfaceRef.current = surface
+      const detach = surface.attach(placeholder)
+      return () => {
+        detach()
+        surface.dispose()
+        if (nativeSurfaceRef.current === surface) nativeSurfaceRef.current = null
+      }
+    }
     if (descriptor.mode === 'browser') {
       const canvas = canvasRef.current
       if (canvas === null) return
@@ -205,7 +237,7 @@ export function PreviewTabBody({
         className={css.bar}
         onSubmit={(event) => {
           event.preventDefault()
-          void open(draft, proxyFallback ? 'proxy' : 'browser')
+          void open(draft, preferredMode)
         }}
       >
         <input
@@ -221,7 +253,9 @@ export function PreviewTabBody({
       <div className={css.stage}>
         {descriptor === null
           ? <div className={css.notice}>{loading ? t('panel.loading') : t('panel.noUrl')}</div>
-          : descriptor.mode === 'browser'
+          : descriptor.mode === 'native'
+            ? <div ref={nativeRef} className={css.nativeSurface} data-webview-native-surface="" />
+            : descriptor.mode === 'browser'
             ? <canvas ref={canvasRef} className={css.browserSurface} tabIndex={0} />
             : <iframe ref={frameRef} className={css.frame} src="about:blank" title={t('panel.frame')} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock allow-presentation" referrerPolicy="no-referrer" />}
       </div>

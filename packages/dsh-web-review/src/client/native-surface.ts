@@ -38,6 +38,8 @@ export class NativeBrowserSurface {
   private reportTimer: ReturnType<typeof setTimeout> | undefined
   private lastBounds = ''
   private visible = true
+  /** False while the tab holding this surface is not the visible one. */
+  private shown = true
   private disposed = false
 
   constructor(descriptor: PreviewSessionDescriptor, events: NativeSurfaceEvents) {
@@ -78,6 +80,19 @@ export class NativeBrowserSurface {
       }
       this.element = null
     }
+  }
+
+  /**
+   * Show or hide the panel without touching the page.
+   *
+   * A tab body stays mounted while another tab is active, so the panel must
+   * follow its own tab's visibility or it would float over the new tab.
+   * @param shown - whether this surface's tab is the visible one.
+   */
+  setVisible(shown: boolean): void {
+    if (this.shown === shown) return
+    this.shown = shown
+    this.reportBounds(true)
   }
 
   /** Host side of the bridge: commands go out, page messages come in. */
@@ -150,7 +165,8 @@ export class NativeBrowserSurface {
     const rect = element.getBoundingClientRect()
     const width = Math.round(rect.width)
     const height = Math.round(rect.height)
-    const onScreen = width >= MIN_VISIBLE_EDGE && height >= MIN_VISIBLE_EDGE
+    const onScreen = this.shown
+      && width >= MIN_VISIBLE_EDGE && height >= MIN_VISIBLE_EDGE
       && rect.bottom > 0 && rect.right > 0
       && rect.top < window.innerHeight && rect.left < window.innerWidth
     const bounds = {
