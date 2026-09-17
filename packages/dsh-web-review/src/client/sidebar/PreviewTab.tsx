@@ -361,8 +361,12 @@ export function PreviewTabBody({
   const input = useInput(s => s)
   const promptError = useSession(session => session.promptError)
   const tabVisible = info.tab.visible !== false
+  const tabAddress = typeof info.tab.navigation.address === 'string' ? info.tab.navigation.address : ''
   const requestedUrl = paramUrl(info.tab.navigation.params)
-    || previewUrlOfAddress(typeof info.tab.navigation.address === 'string' ? info.tab.navigation.address : '')
+    || previewUrlOfAddress(tabAddress)
+    // A tab opened before previews were addressed per page keeps the legacy page
+    // address; it adopts the session's current page instead of going blank.
+    || (tabAddress === `sidebar://${PREVIEW_TAB_KIND}` ? state.url : '')
   const tabKey = String(info.tab.id ?? 'preview')
   const mountedSession = tabSessions.get(tabKey)
   /** The page this body is showing; it also guards the store's own URL echo. */
