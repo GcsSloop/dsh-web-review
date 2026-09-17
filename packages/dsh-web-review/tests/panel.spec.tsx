@@ -793,9 +793,11 @@ describe('PreviewTabBody', () => {
     vi.unstubAllGlobals()
   })
 
-  it('does not open a session for a hidden tab until it is shown', async () => {
-    // A hidden preview tab used to report visible bounds and fight the visible
-    // tab for the shell's single panel, making the pane flicker between pages.
+  it('prepares a hidden tab without describing the shared store', async () => {
+    // A hidden preview tab prepares its own session up front, but never mirrors
+    // its page into the shared store — only the visible tab describes it. The
+    // surface reports invisible bounds, which is what stops two previews from
+    // fighting over the shell's single panel.
     const calls: string[] = []
     const factory = (_target: string, mode?: PreviewSessionMode) => {
       calls.push(String(mode))
@@ -808,10 +810,11 @@ describe('PreviewTabBody', () => {
         targetOrigin: 'http://localhost:5173',
       })
     }
-    renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', { url: 'http://localhost:5173/' },
+    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', { url: 'http://localhost:5173/' },
       undefined, '', factory, false)
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
-    expect(calls).toEqual([])
+    expect(calls).toEqual(['native'])
+    expect(store.getSnapshot().url).toBe('')
   })
 
   it('treats a page redirect as the same session, not a navigation', async () => {

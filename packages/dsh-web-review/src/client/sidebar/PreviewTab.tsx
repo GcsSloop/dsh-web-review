@@ -635,10 +635,10 @@ export function PreviewTabBody({
     actions.setUrl(normalized)
   }, [requestedUrl, info.tab.navigation.revision, tabVisible])
 
-  // A hidden tab prepares no session: it would report bounds and fight the
-  // visible tab for the shell's single panel. The session starts when shown.
+  // Every tab prepares its own session up front; the surface reports invisible
+  // bounds while the tab is hidden, which is what keeps one preview from
+  // fighting another for the shell's single panel.
   useEffect(() => {
-    if (!tabVisible) return
     if (localUrl === loadedPageUrl.current) return
     sessionRequest.current += 1
     const request = sessionRequest.current
@@ -700,7 +700,7 @@ export function PreviewTabBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs above exist
     // exactly so the fresh closures of `createPreviewSession` and `t` cannot
     // re-run this effect.
-  }, [localUrl, previewRequestRevision, preferredMode, tabKey, tabVisible])
+  }, [localUrl, previewRequestRevision, preferredMode, tabKey])
 
   useEffect(() => {
     if (descriptor === null) return
@@ -1141,7 +1141,14 @@ export function PreviewTabBody({
       <div className={css.stage} ref={stageRef}>
         <div className={css.page}>
           {descriptor === null
-            ? <div className={css.notice}>{loading ? `${t('panel.loading')}${attemptLabel === '' ? '' : `（${attemptLabel}）`}` : t('panel.noUrl')}</div>
+            ? (
+              <>
+                <div className={css.notice}>{loading ? `${t('panel.loading')}${attemptLabel === '' ? '' : `（${attemptLabel}）`}` : t('panel.noUrl')}</div>
+                <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: '#a0a4ab', padding: '0 12px' }}>
+                  diag visible={String(tabVisible)} localUrl={JSON.stringify(localUrl)} draft={JSON.stringify(draft)} loading={String(loading)} attempt={attemptLabel || '—'}
+                </div>
+              </>
+            )
             : descriptor.mode === 'native'
               ? <div ref={nativeRef} className={css.nativeSurface} data-webview-native-surface="" />
               : descriptor.mode === 'browser'
