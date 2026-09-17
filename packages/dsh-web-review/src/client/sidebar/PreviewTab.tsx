@@ -403,6 +403,8 @@ export function PreviewTabBody({
   /** Why the last attempt failed, shown as the error strip's tooltip. */
   const [errorDetail, setErrorDetail] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  /** The transport and attempt in flight, shown next to the starting notice. */
+  const [attemptLabel, setAttemptLabel] = useState('')
   /**
    * Transport preference: the shell's native panel first, then a real Chromium
    * over CDP, then the isolated proxy. Each 503 downgrades one step, so a
@@ -653,10 +655,12 @@ export function PreviewTabBody({
     attemptsRef.current.count += 1
     if (attemptsRef.current.count > MAX_PREVIEW_ATTEMPTS) {
       setLoading(false)
+      setAttemptLabel('')
       setErrorDetail(`${mode} gave up after ${String(MAX_PREVIEW_ATTEMPTS)} attempts`)
       actionsRef.current.setError(translateRef.current('panel.previewUnavailable'))
       return
     }
+    setAttemptLabel(`${mode} ${String(attemptsRef.current.count)}/${String(MAX_PREVIEW_ATTEMPTS)}`)
     setLoading(true)
     void createSessionRef.current(localUrl, mode).then((next) => {
       if (!mounted.current || request !== sessionRequest.current) {
@@ -672,6 +676,7 @@ export function PreviewTabBody({
       }
       setDescriptor(next)
       setLoading(false)
+      setAttemptLabel('')
     }).catch((thrown: unknown) => {
       setLoading(false)
       if (!mounted.current || request !== sessionRequest.current) return
@@ -686,8 +691,9 @@ export function PreviewTabBody({
         if (mode === 'browser') { setPreferredMode('proxy'); setErrorDetail('browser unavailable → proxy'); return }
       }
       loadedPageUrl.current = null
-      setErrorDetail(`${mode} ${timedOut ? 'timed out' : String(status ?? 'failed')}`)
-      actionsRef.current.setError(translateRef.current('panel.previewUnavailable'))
+      const detail = `${mode} ${timedOut ? 'timed out' : String(status ?? 'failed')}`
+      setErrorDetail(detail)
+      actionsRef.current.setError(`${translateRef.current('panel.previewUnavailable')}（${detail}）`)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs above exist
     // exactly so the fresh closures of `createPreviewSession` and `t` cannot
@@ -1127,7 +1133,7 @@ export function PreviewTabBody({
       <div className={css.stage} ref={stageRef}>
         <div className={css.page}>
           {descriptor === null
-            ? <div className={css.notice}>{loading ? t('panel.loading') : t('panel.noUrl')}</div>
+            ? <div className={css.notice}>{loading ? `${t('panel.loading')}${attemptLabel === '' ? '' : `（${attemptLabel}）`}` : t('panel.noUrl')}</div>
             : descriptor.mode === 'native'
               ? <div ref={nativeRef} className={css.nativeSurface} data-webview-native-surface="" />
               : descriptor.mode === 'browser'
