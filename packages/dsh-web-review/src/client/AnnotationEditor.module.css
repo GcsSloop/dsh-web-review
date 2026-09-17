@@ -35,6 +35,32 @@
   box-shadow: none;
 }
 
+/*
+ * Docked sheet: the right Sidebar pane's own annotation surface. It is pinned to
+ * the pane's width and bottom edge, so it never floats over the page area — a
+ * native shell panel cannot be painted across by host DOM.
+ */
+.editor[data-docked] {
+  inset: 0;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  box-shadow:
+    0 -18px 40px rgb(15 23 42 / 14%),
+    0 -3px 8px rgb(15 23 42 / 8%);
+}
+
+/* The sheet's top edge is its only resize direction. */
+.editor[data-docked] .resizeHandle[data-resize-edge="n"] {
+  left: 0;
+  width: 100%;
+  height: 14px;
+  background: linear-gradient(to bottom, rgb(0 0 0 / 6%), transparent);
+}
+
 .editor[data-scrubbing] * {
   visibility: hidden;
   pointer-events: none;

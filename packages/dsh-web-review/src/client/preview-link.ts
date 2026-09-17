@@ -24,12 +24,3 @@ export function previewHrefFromClick(event: MouseEvent): string | undefined {
     return undefined
   }
 }
-
-/** Activate one registered conversation tab through its accessible UI. */
-export function activateConversationTab(root: ParentNode, label: string): boolean {
-  const tab = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-    .find(candidate => candidate.textContent?.trim() === label)
-  if (tab === undefined) return false
-  tab.click()
-  return true
-}

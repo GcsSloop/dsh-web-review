@@ -1,22 +1,22 @@
 /**
- * dsh-web-review browser half: the "网页预览" conversation view tab (isolated
- * Preview frame + message bridge) and the "注释" dock above
- * the composer, sharing one webview store instance. Structured annotation
- * snapshots commit immediately to the node half's `/webview-annotations`
- * route as pending state, then become separately logged plugin context only
- * when the stock composer prompt is admitted.
+ * dsh-web-review browser half: the preview page tab in the right Sidebar — the
+ * isolated Preview transport, its exact-Origin bridge, the picker and the host
+ * annotation editor — and the "注释" dock above the composer, sharing one
+ * webview store instance. Structured annotation snapshots commit immediately to
+ * the node half's `/webview-annotations` route as pending state, then become
+ * separately logged plugin context only when the stock composer prompt is
+ * admitted.
  *
- * Composition: two registrations into ui-conversation slots — the
- * 'conversation.view' tab (id 'webview', order 20) and the
- * 'conversation.input.dock' annotation strip (id 'webview-annotations',
- * order 15) — both declaring the SAME apply-constructed store handle, so the
- * framework resolves one instance per session: the tab and the dock share one
- * pick list (ui-conversation's chatStore multi-registration pattern). The
- * dock immediately prepares each full structured snapshot on the node face;
- * pre-step admission later appends it to the accepted message batch. Slot
- * declaration order is independent, so each contribution uses `slots.inject`
- * and follows the declaring ui-conversation entry across reloads. The inject
- * face stays thin: one serialized, acknowledged per-session annotation sync.
+ * Composition: one registration into the right Sidebar's keyed
+ * `sidebar.right.pane.tab` seat (through the host's `sidebarRightTabs` type
+ * registry) plus the 'conversation.input.dock' annotation strip
+ * (id 'webview-annotations', order 15), both declaring the SAME
+ * apply-constructed store handle, so the framework resolves one instance per
+ * session: the preview tab and the dock share one pick list (ui-conversation's
+ * chatStore multi-registration pattern). The dock immediately prepares each
+ * full structured snapshot on the node face; pre-step admission later appends it
+ * to the accepted message batch. The inject face stays thin: one serialized,
+ * acknowledged per-session annotation sync.
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -26,7 +26,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-// Type-only: pulls the ui-conversation SlotMap merge (the view/dock entries).
+// Type-only: pulls the ui-conversation SlotMap merge (the dock entry).
 import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-commands/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -36,12 +36,14 @@ import {
   type AnnotationSyncReceipt,
 } from '../annotation-contract.ts'
 import { en, zh, type WebviewKey } from './locales.ts'
-import { registerSidebarPreviewTab } from './sidebar/PreviewTab.tsx'
+import {
+  PREVIEW_TAB_KIND,
+  registerSidebarPreviewTab,
+  type PreviewTabInjected,
+} from './sidebar/PreviewTab.tsx'
 import { createWebviewStore } from './stores.ts'
-import { WebviewView, type WebviewViewInjected } from './WebviewView.tsx'
 import { DraftOverlayBar, type WebviewDockInjected } from './DraftOverlayBar.tsx'
 import { normalizePreviewUrl } from './navigation-url.ts'
-import { activateConversationTab } from './preview-link.ts'
 import { isUiSkillName, UI_SKILLS, type UiSkillName } from '../ui-skills.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -175,7 +177,7 @@ import { createPreviewSession, releasePreviewSessions } from './preview-session.
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-web-review: dictionaries')
 
-  // Registration-time text (the view tab label) reads through the bound
+  // Registration-time text (the guide capsule) reads through the bound
   // translate as a thunk, so it follows the active locale without
   // re-registration; components read the standard `t` seat instead.
   const t = ctx.locale.bind(NS)
@@ -186,7 +188,14 @@ export function apply(ctx: ClientContext): void {
   const webviewStore = createWebviewStore()
 
   // Optional right-Sidebar home: registered only when the host is mounted.
-  registerSidebarPreviewTab(ctx, t)
+  registerSidebarPreviewTab(ctx, t, {
+    store: webviewStore,
+    inject: (sessionId: SessionId): PreviewTabInjected => ({
+      sendAnnotationsWithoutDraft: () => scopedConversation(ctx, sessionId).send(t('panel.pick.defaultPrompt')),
+      createPreviewSession,
+      releasePreviewSessions,
+    }),
+  })
 
   ctx.inject(['commandUi'], (scope: ClientContext) => {
     scope.effect(() => scope.commandUi.register({
@@ -207,20 +216,6 @@ export function apply(ctx: ClientContext): void {
     }), 'dsh-web-review: /skills contribution')
   })
 
-  ctx.slots.inject('conversation.view', () => ctx.slots.register({
-    name: 'conversation.view',
-    id: 'webview',
-    order: 20,
-    label: () => t('view.tab'),
-    locale: NS,
-    store: webviewStore,
-    inject: (sessionId: SessionId): WebviewViewInjected => ({
-      sendAnnotationsWithoutDraft: () => scopedConversation(ctx, sessionId).send(t('panel.pick.defaultPrompt')),
-      returnToChat: () => { activateConversationTab(document, t('view.chat')) },
-      createPreviewSession,
-      releasePreviewSessions,
-    }),
-  }, WebviewView))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'webview-annotations',
@@ -237,7 +232,9 @@ export function apply(ctx: ClientContext): void {
         actions.setTitle('')
         actions.clearPicks()
         ctx.layout.closeDetails()
-        activateConversationTab(document, t('view.tab'))
+        // The right Sidebar owns the preview: this reveals (or opens) its page
+        // tab, which navigates from the address recorded here.
+        ctx.sidebarRight?.openTab(PREVIEW_TAB_KIND, { params: { url: normalized } })
       },
     }),
   }, DraftOverlayBar))

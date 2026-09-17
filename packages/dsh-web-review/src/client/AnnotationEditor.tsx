@@ -77,6 +77,18 @@ interface AnnotationEditorBaseProps {
   selectedSkills?: readonly UiSkillName[]
   position?: FloatingEditorPosition | null
   size?: FloatingEditorSize | null
+  /**
+   * Render as the preview pane's own bottom sheet instead of a floating card.
+   *
+   * The right Sidebar is narrow, and its page area may be a native shell panel
+   * that no host DOM can paint over: filling the pane's reserved strip keeps the
+   * editor visible and gives it the full pane width.
+   */
+  docked?: boolean
+  /** Largest docked height the pane allows, in CSS pixels. */
+  dockMaxHeight?: number
+  /** Report a mode change so a docked host can size the sheet it renders. */
+  onModeChange?: (mode: AnnotationEditorMode) => void
   t: Translate<WebviewKey>
   onCancel: () => void
   onConfirm: (value: AnnotationEditorValue) => void
@@ -112,11 +124,14 @@ export interface ElementNavigationFeedback {
   sequence: number
 }
 
+const ignoreModeChange = (): void => {}
 const ignorePositionChange = (): void => {}
 const ignoreSizeChange = (): void => {}
 const ignoreSizeCommit = (): void => {}
 
 const RESIZE_EDGES: readonly FloatingEditorResizeEdge[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']
+/** A docked sheet is pinned to the pane's width, so only its top edge resizes. */
+const DOCKED_RESIZE_EDGES: readonly FloatingEditorResizeEdge[] = ['n']
 
 function previewNavigationTargetLabel(target: PreviewElementTarget, t: Translate<WebviewKey>): string {
   const tag = target.snapshot.tagName
@@ -190,6 +205,9 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
     textChange: initialTextChange, initialMode = 'collapsed', initialFocus = 'editor', navigationFeedback = null,
     position = null, size = null, t, onCancel, onConfirm,
     selectedSkills = [], onToggleSkill = () => {},
+    docked = false,
+    dockMaxHeight,
+    onModeChange = ignoreModeChange,
     onPositionChange = ignorePositionChange,
     onSizeChange = ignoreSizeChange,
     onSizeCommit = ignoreSizeCommit,
@@ -493,27 +511,31 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
   // iframe viewport for one stable render.
   const preferredHeight = mode === 'select' ? 430 : mode === 'adjust' ? 560 : 82
   const measuredHeight = Math.max(editorRef.current?.scrollHeight ?? 0, preferredHeight)
-  const placement = placeFloatingEditor({
-    target: rect,
-    surfaceWidth: frame.clientWidth,
-    surfaceHeight: frame.clientHeight,
-    editorWidth: width,
-    editorHeight: measuredHeight,
-    minHeight: mode === 'select' ? 260 : mode === 'adjust' ? 300 : 54,
-  })
-  const manualHeight = mode !== 'collapsed' && size !== null
-    ? Math.min(Math.max(size.height, minimumHeight), availableHeight)
-    : Math.min(measuredHeight, availableHeight)
-  const renderedPosition = position === null
-    ? { left: placement.left, top: placement.top }
-    : clampFloatingEditorPosition({
-        position,
+  const placement = docked
+    ? { left: 0, top: 0, maxHeight: availableHeight, side: 'overlap' as const }
+    : placeFloatingEditor({
+        target: rect,
         surfaceWidth: frame.clientWidth,
         surfaceHeight: frame.clientHeight,
         editorWidth: width,
-        editorHeight: manualHeight,
+        editorHeight: measuredHeight,
+        minHeight: mode === 'select' ? 260 : mode === 'adjust' ? 300 : 54,
       })
-  const maxHeight = position === null ? placement.maxHeight : manualHeight
+  const manualHeight = mode !== 'collapsed' && size !== null
+    ? Math.min(Math.max(size.height, minimumHeight), availableHeight)
+    : Math.min(measuredHeight, availableHeight)
+  const renderedPosition = docked
+    ? { left: 0, top: 0 }
+    : position === null
+      ? { left: placement.left, top: placement.top }
+      : clampFloatingEditorPosition({
+          position,
+          surfaceWidth: frame.clientWidth,
+          surfaceHeight: frame.clientHeight,
+          editorWidth: width,
+          editorHeight: manualHeight,
+        })
+  const maxHeight = docked ? availableHeight : position === null ? placement.maxHeight : manualHeight
   const hiddenLeft = Math.min(
     Math.max(8, renderedPosition.left + width - 36),
     Math.max(8, frame.clientWidth - 44),
@@ -546,6 +568,16 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
     setResizing(false)
   }
 
+  /** Set the mode and let a docked host follow the sheet's new height. */
+  const changeMode = (next: AnnotationEditorMode | ((current: AnnotationEditorMode) => AnnotationEditorMode)): void => {
+    // Resolved outside the state updater: React may run an updater during
+    // render, and the host's own setState must never be called from there.
+    const resolved = typeof next === 'function' ? next(mode) : next
+    if (resolved === mode) return
+    setMode(resolved)
+    onModeChange(resolved)
+  }
+
   const hideEditor = (): void => {
     setActiveScrub(null)
     setHidden(true)
@@ -561,15 +593,18 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
       <div
         ref={editorRef}
         className={`${css.editor} ${hidden ? css.editorHidden : ''}`}
-        style={{
-          left: renderedPosition.left,
-          top: renderedPosition.top,
-          width,
-          maxHeight,
-          ...(mode !== 'collapsed' && size !== null ? { height: manualHeight } : {}),
-        }}
+        style={docked
+          ? { height: '100%' }
+          : {
+              left: renderedPosition.left,
+              top: renderedPosition.top,
+              width,
+              maxHeight,
+              ...(mode !== 'collapsed' && size !== null ? { height: manualHeight } : {}),
+            }}
         data-webview-annotation-editor=""
-        data-placement={placement.side}
+        data-placement={docked ? 'docked' : placement.side}
+        {...(docked ? { 'data-docked': '' } : {})}
         {...(activeScrub === null ? {} : { 'data-scrubbing': activeScrub })}
         {...(hidden ? { 'data-editor-hidden': '' } : {})}
         {...(dragging ? { 'data-editor-dragging': '' } : {})}
@@ -579,12 +614,12 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
         onKeyDown={(event) => {
           if (event.key !== 'Escape' || event.defaultPrevented) return
           event.preventDefault()
-          if (mode === 'select') setMode('collapsed')
+          if (mode === 'select') changeMode('collapsed')
           else cancel()
         }}
         onKeyDownCapture={(event) => { moveSelection(event.nativeEvent, true) }}
       >
-        {mode !== 'collapsed' && RESIZE_EDGES.map(edge => (
+        {mode !== 'collapsed' && (docked ? DOCKED_RESIZE_EDGES : RESIZE_EDGES).map(edge => (
           <div
             key={edge}
             className={css.resizeHandle}
@@ -617,17 +652,31 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
                 resize.started = true
                 setResizing(true)
               }
-              const next = resizeFloatingEditor({
-                edge: resize.edge,
-                position: resize.renderedPosition,
-                size: resize.renderedSize,
-                deltaX,
-                deltaY,
-                surfaceWidth: frame.clientWidth,
-                surfaceHeight: frame.clientHeight,
-                minWidth: minimumWidth,
-                minHeight: minimumHeight,
-              })
+              const next = docked
+                // The sheet is pinned to the pane's bottom edge: dragging its top
+                // edge up grows it, so the delta is inverted rather than applied
+                // to a free-floating box.
+                ? {
+                    position: { left: 0, top: 0 },
+                    size: {
+                      width: resize.renderedSize.width,
+                      height: Math.min(
+                        Math.max(resize.renderedSize.height - deltaY, minimumHeight),
+                        Math.max(minimumHeight, dockMaxHeight ?? availableHeight),
+                      ),
+                    },
+                  }
+                : resizeFloatingEditor({
+                    edge: resize.edge,
+                    position: resize.renderedPosition,
+                    size: resize.renderedSize,
+                    deltaX,
+                    deltaY,
+                    surfaceWidth: frame.clientWidth,
+                    surfaceHeight: frame.clientHeight,
+                    minWidth: minimumWidth,
+                    minHeight: minimumHeight,
+                  })
               onPositionChange(next.position)
               onSizeChange(next.size)
               resize.latestSize = next.size
@@ -647,10 +696,10 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
           />
         ))}
         <div className={`${css.composeRow} ${mode !== 'collapsed' ? css.composeRowExpanded : ''}`}>
-          <button type="button" className={mode === 'select' ? `${css.adjust} ${css.adjustActive}` : css.adjust} aria-label={t('editor.select')} title={t('editor.select')} aria-expanded={mode === 'select'} onClick={() => { setMode(value => value === 'select' ? 'collapsed' : 'select') }}>
+          <button type="button" className={mode === 'select' ? `${css.adjust} ${css.adjustActive}` : css.adjust} aria-label={t('editor.select')} title={t('editor.select')} aria-expanded={mode === 'select'} onClick={() => { changeMode(value => value === 'select' ? 'collapsed' : 'select') }}>
             <SelectIcon />
           </button>
-          <button type="button" className={mode === 'adjust' ? `${css.adjust} ${css.adjustActive}` : css.adjust} aria-label={t('editor.adjust')} title={t('editor.adjust')} aria-expanded={mode === 'adjust'} onClick={() => { setMode(value => value === 'adjust' ? 'collapsed' : 'adjust') }}>
+          <button type="button" className={mode === 'adjust' ? `${css.adjust} ${css.adjustActive}` : css.adjust} aria-label={t('editor.adjust')} title={t('editor.adjust')} aria-expanded={mode === 'adjust'} onClick={() => { changeMode(value => value === 'adjust' ? 'collapsed' : 'adjust') }}>
             <AdjustIcon />
           </button>
           <input
@@ -665,11 +714,11 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
               props.onCommentChange?.(next)
             }}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') { event.preventDefault(); if (mode === 'select') setMode('collapsed'); else cancel() }
+              if (event.key === 'Escape') { event.preventDefault(); if (mode === 'select') changeMode('collapsed'); else cancel() }
               if (event.key === 'Enter') { event.preventDefault(); confirm(event.currentTarget.value) }
             }}
           />
-          {mode !== 'collapsed' && (
+          {mode !== 'collapsed' && !docked && (
             <button
               type="button"
               className={css.dragHandle}

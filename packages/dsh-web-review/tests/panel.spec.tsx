@@ -28,10 +28,9 @@ import {
 } from '../src/preview-contract.ts'
 import { encodeTarget } from '../src/proxy-url.ts'
 import { DraftOverlayBar, type WebviewDockInjected } from '../src/client/DraftOverlayBar.tsx'
-import { WebviewView } from '../src/client/WebviewView.tsx'
+import { PreviewTabBody } from '../src/client/sidebar/PreviewTab.tsx'
 import type { PickItem } from '../src/client/contract.ts'
 import { zh, type WebviewKey } from '../src/client/locales.ts'
-import { activateConversationTab } from '../src/client/preview-link.ts'
 import { createWebviewStore, type WebviewState, type WebviewStore } from '../src/client/stores.ts'
 
 const t: Translate<WebviewKey> = (key, params) => {
@@ -273,7 +272,7 @@ function renderView(
   draft = '',
   submit = vi.fn(),
   phase: 'plain' | 'adjudicating' | 'claimed' | 'submitting' = 'plain',
-  returnToChat = vi.fn(),
+  params: Record<string, unknown> = {},
 ) {
   const store = createWebviewStore().create()
   const session = sessionSource()
@@ -303,7 +302,7 @@ function renderView(
     } as unknown as Promise<PreviewSessionDescriptor>
   }
   render(
-    <WebviewView
+    <PreviewTabBody
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       {...({} as any)}
       useStore={hookFor(store)}
@@ -311,8 +310,14 @@ function renderView(
       useSession={session.useSession}
       useInput={(selector) => selector(input)}
       inputActions={{ setDraft: vi.fn(), submit }}
+      useTabInfo={() => ({
+        tab: {
+          id: 'tab-preview',
+          visible: true,
+          navigation: { params, revision: 0 },
+        },
+      })}
       sendAnnotationsWithoutDraft={sendAnnotationsWithoutDraft}
-      returnToChat={returnToChat}
       createPreviewSession={createPreviewSession}
       releasePreviewSessions={vi.fn(async () => {})}
       t={t}
@@ -342,7 +347,7 @@ function renderDock(
   return store
 }
 
-describe('WebviewView', () => {
+describe('PreviewTabBody', () => {
   it('renders native preview controls and no plugin send UI', () => {
     renderView()
     expect(screen.getByPlaceholderText(zh['panel.urlPlaceholder'])).toBeTruthy()
@@ -480,14 +485,18 @@ describe('WebviewView', () => {
     fireEvent.change(screen.getByLabelText(zh['editor.property.fontSize']), { target: { value: '24px' } })
     await waitFor(() => expect(bridge.commandNames()).toContain('preview-style'))
 
-    const moveHandle = screen.getByRole('button', { name: zh['editor.move'] }) as HTMLButtonElement
-    moveHandle.setPointerCapture = vi.fn()
-    moveHandle.releasePointerCapture = vi.fn()
-    fireEvent.pointerDown(moveHandle, { pointerId: 11, button: 0, clientX: 100, clientY: 100 })
-    fireEvent.pointerMove(moveHandle, { pointerId: 11, clientX: 132, clientY: 120 })
-    fireEvent.pointerUp(moveHandle, { pointerId: 11, clientX: 132, clientY: 120 })
-    const movedEditor = document.querySelector('[data-webview-annotation-editor]') as HTMLDivElement
-    const movedPosition = { left: movedEditor.style.left, top: movedEditor.style.top }
+    // The sheet is docked, so its geometry is its height: it is not movable, and
+    // re-anchoring to another element keeps the height the user chose.
+    expect(screen.queryByRole('button', { name: zh['editor.move'] })).toBeNull()
+    const resizeHandle = document.querySelector('[data-resize-edge="n"]') as HTMLDivElement
+    resizeHandle.setPointerCapture = vi.fn()
+    resizeHandle.hasPointerCapture = vi.fn(() => true)
+    resizeHandle.releasePointerCapture = vi.fn()
+    fireEvent(resizeHandle, new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 400, clientY: 200 }))
+    fireEvent(resizeHandle, new MouseEvent('pointermove', { bubbles: true, button: 0, clientX: 400, clientY: 150 }))
+    fireEvent(resizeHandle, new MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 400, clientY: 150 }))
+    const draggedHeight = (document.querySelector('[data-webview-annotation-sheet]') as HTMLDivElement).style.height
+    expect(draggedHeight).not.toBe('')
 
     fireEvent.keyDown(document.querySelector('[data-webview-annotation-editor]')!, { key: '\\', code: 'Backslash' })
     await waitFor(() => expect(bridge.commandNames()).toContain('navigate-element'))
@@ -495,7 +504,7 @@ describe('WebviewView', () => {
     expect(document.querySelector('[data-webview-property-inspector]')).toBeTruthy()
     const reanchoredEditor = document.querySelector('[data-webview-annotation-editor]') as HTMLDivElement
     expect(document.activeElement).toBe(reanchoredEditor)
-    expect({ left: reanchoredEditor.style.left, top: reanchoredEditor.style.top }).toEqual(movedPosition)
+    expect((document.querySelector('[data-webview-annotation-sheet]') as HTMLDivElement).style.height).toBe(draggedHeight)
 
     fireEvent.click(screen.getByRole('button', { name: zh['editor.select'] }))
     await waitFor(() => expect(document.querySelector('[data-webview-element-selector] [aria-selected="true"]')?.textContent).toContain('div'))
@@ -508,7 +517,7 @@ describe('WebviewView', () => {
     })
   })
 
-  it('remembers a committed editor size for the next bridged element', async () => {
+  it('remembers a committed annotation-sheet height for the next bridged element', async () => {
     const store = renderView()
     act(() => {
       store.actions.setUrl('http://localhost:5173/')
@@ -524,27 +533,27 @@ describe('WebviewView', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: zh['editor.adjust'] })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: zh['editor.adjust'] }))
 
-    const handle = document.querySelector('[data-resize-edge="se"]') as HTMLDivElement
+    // A docked sheet resizes from its own top edge only.
+    expect(document.querySelector('[data-resize-edge="se"]')).toBeNull()
+    const handle = document.querySelector('[data-resize-edge="n"]') as HTMLDivElement
     handle.setPointerCapture = vi.fn()
     handle.hasPointerCapture = vi.fn(() => true)
     handle.releasePointerCapture = vi.fn()
-    fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 500, clientY: 500 }))
-    fireEvent(handle, new MouseEvent('pointermove', { bubbles: true, button: 0, clientX: 460, clientY: 460 }))
-    fireEvent(handle, new MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 460, clientY: 460 }))
+    fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 500, clientY: 200 }))
+    fireEvent(handle, new MouseEvent('pointermove', { bubbles: true, button: 0, clientX: 500, clientY: 140 }))
+    fireEvent(handle, new MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 500, clientY: 140 }))
     const storedSize = JSON.parse(window.localStorage.getItem('dsh-web-review.editor-size.v1') ?? '{}') as {
       width?: number
       height?: number
     }
-    expect(storedSize.width).toBe(360)
     expect(storedSize.height).toBeGreaterThan(400)
 
     fireEvent.click(screen.getByRole('button', { name: zh['editor.cancel'] }))
     act(() => { bridge.pick(previewTarget(5)) })
     await waitFor(() => expect(screen.getByRole('button', { name: zh['editor.adjust'] })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: zh['editor.adjust'] }))
-    const reopened = document.querySelector('[data-webview-annotation-editor]') as HTMLDivElement
-    expect(reopened.style.width).toBe('360px')
-    expect(reopened.style.height).toBe(`${String(storedSize.height)}px`)
+    const sheet = document.querySelector('[data-webview-annotation-sheet]') as HTMLDivElement
+    expect(sheet.style.height).toBe(`${String(storedSize.height)}px`)
   })
 
   it('keeps shared annotation state unchanged while a bridged editor is hidden', async () => {
@@ -577,8 +586,7 @@ describe('WebviewView', () => {
 
   it('uses the Codex-style annotation toolbar and sends only through its injected action', async () => {
     const sendAnnotationsWithoutDraft = vi.fn(async () => {})
-    const returnToChat = vi.fn()
-    const store = renderView(sendAnnotationsWithoutDraft, '', vi.fn(), 'plain', returnToChat)
+    const store = renderView(sendAnnotationsWithoutDraft, '', vi.fn(), 'plain')
     act(() => {
       store.actions.setUrl('http://localhost:5173/')
       store.actions.addPick(pick('p1', 'Tighten the spacing'))
@@ -593,7 +601,6 @@ describe('WebviewView', () => {
     const send = screen.getByRole('button', { name: '发送 1' })
     await act(async () => { fireEvent.click(send) })
     expect(sendAnnotationsWithoutDraft).toHaveBeenCalledOnce()
-    expect(returnToChat).toHaveBeenCalledOnce()
     expect(store.getSnapshot().pickMode).toBe(false)
     expect(store.getSnapshot().picks).toHaveLength(1)
   })
@@ -601,8 +608,7 @@ describe('WebviewView', () => {
   it('submits a non-empty composer draft through the stock input machine', () => {
     const fallback = vi.fn(async () => {})
     const submit = vi.fn()
-    const returnToChat = vi.fn()
-    const store = renderView(fallback, 'ship this draft', submit, 'plain', returnToChat)
+    const store = renderView(fallback, 'ship this draft', submit, 'plain')
     act(() => {
       store.actions.setUrl('http://localhost:5173/')
       store.actions.addPick(pick('p1', 'Apply me'))
@@ -611,7 +617,6 @@ describe('WebviewView', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '发送 1' }))
     expect(submit).toHaveBeenCalledOnce()
-    expect(returnToChat).toHaveBeenCalledOnce()
     expect(fallback).not.toHaveBeenCalled()
     expect(store.getSnapshot().pickMode).toBe(true)
   })
@@ -692,13 +697,50 @@ describe('WebviewView', () => {
     const backButton = screen.getByRole('button', { name: zh['panel.back'] })
     const forwardButton = screen.getByRole('button', { name: zh['panel.forward'] })
     const refreshButton = screen.getByRole('button', { name: zh['panel.refresh'] })
+    const annotateButton = screen.getByRole('button', { name: zh['panel.pick'] })
+    const address = screen.getByPlaceholderText(zh['panel.urlPlaceholder'])
+
+    // Back and forward lead the row; reload and the annotation entry close it.
     expect(backButton.compareDocumentPosition(forwardButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(forwardButton.compareDocumentPosition(refreshButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(forwardButton.compareDocumentPosition(address) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(address.compareDocumentPosition(refreshButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(refreshButton.compareDocumentPosition(annotateButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     fireEvent.click(backButton)
     fireEvent.click(forwardButton)
     expect(bridge.commandNames()).toContain('history-back')
     expect(bridge.commandNames()).toContain('history-forward')
+  })
+
+  it('arms annotation mode from the address row', () => {
+    const store = renderView()
+    act(() => { store.actions.setUrl('http://localhost:5173/') })
+    const bridge = installFrameBridge()
+    act(() => { bridge.ready() })
+
+    const annotate = screen.getByRole('button', { name: zh['panel.pick'] }) as HTMLButtonElement
+    expect(annotate.disabled).toBe(false)
+    fireEvent.click(annotate)
+    expect(store.getSnapshot().pickMode).toBe(true)
+    expect(bridge.commandNames()).toContain('activate')
+
+    fireEvent.click(screen.getByRole('button', { name: zh['panel.pick.off'] }))
+    expect(store.getSnapshot().pickMode).toBe(false)
+    expect(bridge.commandNames()).toContain('deactivate')
+  })
+
+  it('keeps the annotation entry disabled until a page answers through the bridge', () => {
+    const store = renderView()
+    act(() => { store.actions.setUrl('http://localhost:5173/') })
+    installFrameBridge()
+    expect((screen.getByRole('button', { name: zh['panel.pick'] }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('navigates from an opener address carried by the tab', async () => {
+    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', { url: 'http://localhost:5173/docs' })
+    await waitFor(() => { expect(store.getSnapshot().url).toBe('http://localhost:5173/docs') })
+    const address = screen.getByPlaceholderText(zh['panel.urlPlaceholder']) as HTMLInputElement
+    expect(address.value).toBe('http://localhost:5173/docs')
   })
 
 })
@@ -734,22 +776,6 @@ describe('DraftOverlayBar', () => {
     expect(openPreview).toHaveBeenCalledTimes(2)
     assistant.remove()
     user.remove()
-  })
-
-  it('activates a conversation tab by its accessible label', () => {
-    const chat = document.createElement('button')
-    chat.setAttribute('role', 'tab')
-    chat.textContent = '对话'
-    const preview = document.createElement('button')
-    preview.setAttribute('role', 'tab')
-    preview.textContent = zh['view.tab']
-    const clicked = vi.fn()
-    preview.addEventListener('click', clicked)
-    document.body.append(chat, preview)
-    expect(activateConversationTab(document, zh['view.tab'])).toBe(true)
-    expect(clicked).toHaveBeenCalledOnce()
-    chat.remove()
-    preview.remove()
   })
 
   it('renders nothing for an initial empty state', async () => {
