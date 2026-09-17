@@ -72,6 +72,15 @@ export function registerSidebarPreviewTab(
   ctx: ClientContext,
   t: (key: WebviewKey) => string,
 ): void {
+  try {
+    registerPreviewTab(ctx, t)
+  } catch {
+    // The right Sidebar is optional: a host that answers differently must never
+    // take the preview view, dock, or shell boot down with it.
+  }
+}
+
+function registerPreviewTab(ctx: ClientContext, t: (key: WebviewKey) => string): void {
   const tabs = ctx.get('sidebarRightTabs')
   if (tabs === undefined || ctx.get('sidebarRight') === undefined) return
   // The keyed tab seat is declared by the host package, which this plugin does
