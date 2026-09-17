@@ -146,6 +146,8 @@ function nativeBootstrap(
   }).replaceAll('<', '\\u003c')
   const target = JSON.stringify(endpoint).replaceAll('<', '\\u003c')
   return `window.__DSH_WEB_REVIEW_BRIDGE_CONFIG__=${config};
+window.__DSH_WEB_REVIEW_NATIVE_ENDPOINT__=${target};
+window.__DSH_WEB_REVIEW_CHANNEL__=${JSON.stringify(session.channel)};
 (function(){
   var endpoint=${target};
   function report(){ try{ fetch(endpoint,{method:'POST',mode:'no-cors',keepalive:true,body:JSON.stringify({type:'state',url:location.href,title:document.title,loading:false})}) }catch(error){} }
@@ -266,6 +268,15 @@ export class NativeBrowserSessions {
     if (record.type === 'bridge') {
       if (typeof record.payload !== 'string' || record.payload.length > MAX_EVENT_BYTES) return false
       this.emit(session, { type: 'bridge', payload: record.payload })
+      return true
+    }
+    // The bridge artifact posts its own message shape when the native sink is
+    // its transport, exactly as the CDP binding would hand it over: wrap it into
+    // the stream envelope the panel half consumes.
+    if (record.protocol === PREVIEW_BRIDGE_PROTOCOL && record.direction === 'frame-to-host') {
+      const payload = JSON.stringify(value)
+      if (payload.length > MAX_EVENT_BYTES) return false
+      this.emit(session, { type: 'bridge', payload })
       return true
     }
     if (record.type === 'error') {

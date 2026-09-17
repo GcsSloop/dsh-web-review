@@ -1046,10 +1046,28 @@ describe('native panel transport (fake shell + real composition)', () => {
           headers: { 'content-type': 'text/plain' },
           body: JSON.stringify({ type: 'state', url: `${fixtureUrl}/typed`, title: '来自面板', loading: false }),
         })
+        // The bridge artifact posts its own message shape (not the envelope) when
+        // the native sink is its transport; the same stream must carry it.
+        const rawBridge = JSON.stringify({
+          protocol: 'dsh-web-review/bridge',
+          version: 1,
+          channel: descriptor.channel,
+          direction: 'frame-to-host',
+          requestId: 'raw-1',
+          response: { ok: true, value: null },
+        })
+        expect((await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'text/plain' },
+          body: rawBridge,
+        })).status).toBe(204)
         const events = await readSseEvents(stream, collected => (
-          collected.some(event => event.type === 'bridge') && collected.some(event => event.type === 'state' && event.title === '来自面板')
+          collected.some(event => event.type === 'bridge' && String(event.payload) === bridgeMessage)
+          && collected.some(event => String(event.payload).includes('"requestId":"raw-1"'))
+          && collected.some(event => event.type === 'state' && event.title === '来自面板')
         ))
-        expect(events.find(event => event.type === 'bridge')?.payload).toBe(bridgeMessage)
+        expect(events.some(event => event.payload === bridgeMessage)).toBe(true)
+        expect(events.some(event => String(event.payload).includes('"requestId":"raw-1"'))).toBe(true)
         // The stream opens with the session's own state; the page's report follows.
         expect(events.filter(event => event.type === 'state').map(event => event.url))
           .toEqual([`${fixtureUrl}/`, `${fixtureUrl}/typed`])

@@ -62,6 +62,7 @@ import {
   type PreviewReadyState,
 } from './preview-bridge.ts'
 import { BrowserPreviewSurface } from './browser-surface.ts'
+import { NativeBrowserSurface } from './native-surface.ts'
 import css from './WebviewView.module.css'
 
 /** Full composed props: runtime + store + locale shares. */
@@ -130,11 +131,17 @@ export function WebviewView({
   actionsRef.current = actions
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const nativeRef = useRef<HTMLDivElement | null>(null)
   const surfaceRef = useRef<BrowserPreviewSurface | null>(null)
+  const nativeSurfaceRef = useRef<NativeBrowserSurface | null>(null)
   const bridgeRef = useRef<PreviewBridgeClient | null>(null)
   const [descriptor, setDescriptor] = useState<PreviewSessionDescriptor | null>(null)
-  /** Browser-mode previews fall back to the isolated proxy when no Chromium is available. */
-  const [proxyFallback, setProxyFallback] = useState(false)
+  /**
+   * Preview transport preference: the shell's native panel first, then a real
+   * Chromium driven over CDP, then the isolated HTTP proxy. Each 503 downgrades
+   * one step, so a deployment missing either capability still previews.
+   */
+  const [preferredMode, setPreferredMode] = useState<PreviewSessionMode>('native')
   const [previewRequestRevision, setPreviewRequestRevision] = useState(0)
   const sessionRequest = useRef(0)
   const loadedPageUrl = useRef<string | null>(null)
@@ -292,7 +299,7 @@ export function WebviewView({
       return
     }
     loadedPageUrl.current = state.url
-    const mode = proxyFallback ? 'proxy' : 'browser'
+    const mode = preferredMode
     void createPreviewSession(state.url, mode).then((next) => {
       if (!mounted.current || request !== sessionRequest.current) {
         release([next.sessionId])
@@ -301,15 +308,15 @@ export function WebviewView({
       setDescriptor(next)
     }).catch((error: unknown) => {
       if (!mounted.current || request !== sessionRequest.current) return
-      // A deployment without a usable Chromium keeps working through the proxy.
-      if (mode === 'browser' && (error as { status?: number }).status === 503) {
-        setProxyFallback(true)
-        return
+      if ((error as { status?: number }).status === 503) {
+        // native -> browser -> proxy, one step per unavailable transport.
+        if (mode === 'native') { setPreferredMode('browser'); return }
+        if (mode === 'browser') { setPreferredMode('proxy'); return }
       }
       loadedPageUrl.current = null
       actionsRef.current.setError(t('panel.previewUnavailable'))
     })
-  }, [state.url, previewRequestRevision, createPreviewSession, t, proxyFallback])
+  }, [state.url, previewRequestRevision, createPreviewSession, t, preferredMode])
 
   useEffect(() => {
     if (descriptor === null) return
@@ -352,6 +359,33 @@ export function WebviewView({
         setPickerReady(false)
         actionsRef.current.setError(t('panel.previewUnavailable'))
       },
+    }
+    if (descriptor.mode === 'native') {
+      const placeholder = nativeRef.current
+      if (placeholder === null) return
+      const surface = new NativeBrowserSurface(descriptor, {
+        onState: (nativeState) => {
+          setHistoryState({ canGoBack: false, canGoForward: false })
+          actionsRef.current.setError(null)
+          actionsRef.current.setTitle(nativeState.title)
+          loadedPageUrl.current = nativeState.url
+          if (stateRef.current.url !== nativeState.url) actionsRef.current.setUrl(nativeState.url)
+          if (!nativeState.loading) bridge?.frameLoaded()
+        },
+        onError: (message) => { actionsRef.current.setError(message) },
+      })
+      nativeSurfaceRef.current = surface
+      bridge = new PreviewBridgeClient(surface.carrier(), descriptor, callbacks)
+      bridgeRef.current = bridge
+      const detach = surface.attach(placeholder)
+      bridge.frameLoaded()
+      return () => {
+        if (bridgeRef.current === bridge) bridgeRef.current = null
+        release(bridge?.dispose() ?? [])
+        detach()
+        surface.dispose()
+        if (nativeSurfaceRef.current === surface) nativeSurfaceRef.current = null
+      }
     }
     if (descriptor.mode === 'browser') {
       const canvas = canvasRef.current
@@ -468,7 +502,10 @@ export function WebviewView({
 
   const frameSrc = descriptor?.frameUrl
   const browserMode = descriptor?.mode === 'browser'
-  const surfaceElement: HTMLElement | null = browserMode ? canvasRef.current : frameRef.current
+  const nativeMode = descriptor?.mode === 'native'
+  const surfaceElement: HTMLElement | null = nativeMode
+    ? nativeRef.current
+    : browserMode ? canvasRef.current : frameRef.current
   const pickDisabled = !pickerReady || state.url === ''
   const visibleError = state.annotationSync.status === 'error' ? state.annotationSync.message : state.error
   const inputBusy = input.phase === 'adjudicating' || input.phase === 'submitting'
@@ -643,7 +680,15 @@ export function WebviewView({
       )}
       <div className={css.body} data-webview-preview-body="">
         <div className={css.frameWrap}>
-          {frameSrc !== undefined && browserMode
+          {frameSrc !== undefined && nativeMode
+            ? (
+              <div
+                ref={nativeRef}
+                className={css.nativeSurface}
+                data-webview-native-surface=""
+              />
+            )
+            : frameSrc !== undefined && browserMode
             ? (
               <canvas
                 ref={canvasRef}

@@ -265,6 +265,14 @@
   border: 0;
 }
 
+/* Stands where the shell's native panel is placed; it paints nothing itself. */
+.nativeSurface {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--dsw-alias-bg-base, #fff);
+}
+
 .browserSurface {
   display: block;
   width: 100%;

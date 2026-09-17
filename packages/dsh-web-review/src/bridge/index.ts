@@ -212,19 +212,39 @@ function deliver(message: PreviewFrameEventMessage | PreviewFrameResponseMessage
   }
   // A native shell panel has no parent frame and no injected binding: the host
   // names a loopback endpoint it owns. `no-cors` keeps it a simple request.
-  const native = config.native
-  if (native !== undefined) {
+  // A native shell panel names its endpoint either in the frozen config or in
+  // the bootstrap's own global; either one identifies the same loopback sink.
+  const nativeEndpoint = config.native?.endpoint ?? nativeEndpointGlobal()
+  if (nativeEndpoint !== undefined) {
+    const body = JSON.stringify(message)
     try {
-      void fetch(native.endpoint, {
-        method: 'POST',
-        mode: 'no-cors',
-        body: JSON.stringify(message),
-        keepalive: true,
+      // `keepalive` is deliberately absent: WebKit rejects some keepalive
+      // combinations, and a beacon is the reliable fallback when fetch fails.
+      void fetch(nativeEndpoint, { method: 'POST', mode: 'no-cors', body }).catch((error: unknown) => {
+        noteNativeFailure(error)
+        try { navigator.sendBeacon?.(nativeEndpoint, body) } catch { /* nothing left to try */ }
       })
-    } catch { /* a dropped bridge message must not break the page */ }
+    } catch (error) {
+      noteNativeFailure(error)
+      try { navigator.sendBeacon?.(nativeEndpoint, body) } catch { /* nothing left to try */ }
+    }
     return
   }
   Reflect.apply(nativePostMessage, parent, [message, config.parentOrigin])
+}
+
+/** Record why a native delivery failed, for the host's diagnostics. */
+function noteNativeFailure(error: unknown): void {
+  try {
+    (window as unknown as { __DSH_WEB_REVIEW_NATIVE_ERROR__?: unknown }).__DSH_WEB_REVIEW_NATIVE_ERROR__ =
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  } catch { /* diagnostics are best effort */ }
+}
+
+/** The bootstrap's endpoint global, when a host published one. */
+function nativeEndpointGlobal(): string | undefined {
+  const value = (window as unknown as { __DSH_WEB_REVIEW_NATIVE_ENDPOINT__?: unknown }).__DSH_WEB_REVIEW_NATIVE_ENDPOINT__
+  return typeof value === 'string' ? value : undefined
 }
 
 function postEvent(event: PreviewFrameEvent): void {
