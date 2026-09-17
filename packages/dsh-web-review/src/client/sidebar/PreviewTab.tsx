@@ -517,7 +517,12 @@ export function PreviewTabBody({
         release([next.sessionId])
         return
       }
+      const previous = tabSessions.get(tabKey)
       tabSessions.set(tabKey, { descriptor: next, url: state.url })
+      // A replaced session would otherwise linger as an idle panel until it expires.
+      if (previous !== undefined && previous.descriptor.sessionId !== next.sessionId) {
+        release([previous.descriptor.sessionId])
+      }
       setDescriptor(next)
       setLoading(false)
     }).catch((thrown: unknown) => {
