@@ -313,32 +313,8 @@ export function WebviewView({
 
   useEffect(() => {
     if (descriptor === null) return
-    if (descriptor.mode === 'browser') {
-      const canvas = canvasRef.current
-      if (canvas === null) return
-      const surface = new BrowserPreviewSurface(descriptor, {
-        onState: (browserState) => {
-          // The real browser reports its own address and title, so the toolbar
-          // and the annotation context follow the page without a bridge hop.
-          setHistoryState({ canGoBack: false, canGoForward: false })
-          actionsRef.current.setError(null)
-          actionsRef.current.setTitle(browserState.title)
-          loadedPageUrl.current = browserState.url
-          if (stateRef.current.url !== browserState.url) actionsRef.current.setUrl(browserState.url)
-        },
-        onError: (message) => { actionsRef.current.setError(message) },
-      })
-      surfaceRef.current = surface
-      const detach = surface.attach(canvas)
-      return () => {
-        detach()
-        surface.dispose()
-        if (surfaceRef.current === surface) surfaceRef.current = null
-      }
-    }
-    const frame = frameRef.current
-    if (frame === null) return
-    const bridge = new PreviewBridgeClient(iframeCarrier(frame), descriptor, {
+    let bridge: PreviewBridgeClient | null = null
+    const callbacks = {
       onReady: (ready: PreviewReadyState) => {
         setPickerReady(true)
         setHistoryState({ canGoBack: ready.canGoBack, canGoForward: ready.canGoForward })
@@ -347,20 +323,24 @@ export function WebviewView({
         loadedPageUrl.current = ready.pageUrl
         if (stateRef.current.url !== ready.pageUrl) actionsRef.current.setUrl(ready.pageUrl)
         if (editorRef.current !== null) setEditor(null)
-        bridge.syncMarkers(stateRef.current.picks)
-        if (stateRef.current.pickMode) bridge.activate()
+        bridge?.syncMarkers(stateRef.current.picks)
+        if (stateRef.current.pickMode) bridge?.activate()
       },
-      onPick: target => { onPickRef.current(target) },
+      onPick: (target: PreviewElementTarget) => { onPickRef.current(target) },
       onCancelPick: () => {
         if (stateRef.current.pickMode) actionsRef.current.togglePickMode()
       },
-      onMarkClick: id => { onMarkClickRef.current(id) },
-      onTargetGeometry: (handle, rect, viewport) => {
+      onMarkClick: (id: string) => { onMarkClickRef.current(id) },
+      onTargetGeometry: (
+        handle: PreviewElementHandle,
+        rect: PreviewElementTarget['rect'],
+        viewport: PreviewElementTarget['viewport'],
+      ) => {
         setEditor(current => current === null || current.target.handle !== handle
           ? current
           : { ...current, target: { ...current.target, rect, viewport } })
       },
-      onShortcut: action => { onShortcutRef.current(action) },
+      onShortcut: (action: PreviewElementNavigationAction) => { onShortcutRef.current(action) },
       onHandoff: () => {
         setPickerReady(false)
         setHistoryState({ canGoBack: false, canGoForward: false })
@@ -372,7 +352,40 @@ export function WebviewView({
         setPickerReady(false)
         actionsRef.current.setError(t('panel.previewUnavailable'))
       },
-    })
+    }
+    if (descriptor.mode === 'browser') {
+      const canvas = canvasRef.current
+      if (canvas === null) return
+      const surface = new BrowserPreviewSurface(descriptor, {
+        onState: (browserState) => {
+          // The real browser reports its own address and title, so the toolbar
+          // follows the page without a bridge hop.
+          setHistoryState({ canGoBack: false, canGoForward: false })
+          actionsRef.current.setError(null)
+          actionsRef.current.setTitle(browserState.title)
+          loadedPageUrl.current = browserState.url
+          if (stateRef.current.url !== browserState.url) actionsRef.current.setUrl(browserState.url)
+          // A finished load may be the injected bridge's first chance to answer.
+          if (!browserState.loading) bridge?.frameLoaded()
+        },
+        onError: (message) => { actionsRef.current.setError(message) },
+      })
+      surfaceRef.current = surface
+      bridge = new PreviewBridgeClient(surface.carrier(), descriptor, callbacks)
+      bridgeRef.current = bridge
+      const detach = surface.attach(canvas)
+      bridge.frameLoaded()
+      return () => {
+        if (bridgeRef.current === bridge) bridgeRef.current = null
+        release(bridge?.dispose() ?? [])
+        detach()
+        surface.dispose()
+        if (surfaceRef.current === surface) surfaceRef.current = null
+      }
+    }
+    const frame = frameRef.current
+    if (frame === null) return
+    bridge = new PreviewBridgeClient(iframeCarrier(frame), descriptor, callbacks)
     bridgeRef.current = bridge
     // Arm the exact-source/exact-Origin listener before starting navigation.
     // This is essential for an initial response that immediately crosses
@@ -381,7 +394,7 @@ export function WebviewView({
     frame.src = descriptor.frameUrl
     return () => {
       if (bridgeRef.current === bridge) bridgeRef.current = null
-      release(bridge.dispose())
+      release(bridge?.dispose() ?? [])
     }
   }, [descriptor, releasePreviewSessions, t])
 

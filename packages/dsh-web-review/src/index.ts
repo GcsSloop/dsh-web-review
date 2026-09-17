@@ -58,8 +58,8 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   const annotations: AnnotationCommitState = new Map()
   registerUiSkillProvider(ctx, config)
   let previewServer: IsolatedPreviewServer | undefined
+  const bridgeSource = await readBridgeSource()
   await ctx.effect(async () => {
-    const bridgeSource = await readBridgeSource()
     previewServer = await startIsolatedPreviewServer(bridgeSource, { cookies: config.previewCookies })
     ctx.logger.info(`isolated preview server listening on 127.0.0.1:${String(previewServer.port)}`)
     return async () => { await previewServer?.close() }
@@ -72,6 +72,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   })
   const livePreviewServer = previewServer
   const browserSessions = BrowserPreviewSessions.create({
+    bridgeSource,
     enabled: config.browserPreview,
     executable: config.browserExecutable,
     profileDir: config.browserProfileDir,

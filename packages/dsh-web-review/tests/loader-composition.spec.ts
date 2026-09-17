@@ -709,4 +709,71 @@ describe('browser preview transport (real Loader + webserver composition)', () =
     },
     90_000,
   )
+
+  it.skipIf(resolveBrowserExecutable() === undefined)(
+    'runs the injected bridge in the real page and carries it back over the binding',
+    async () => {
+      await loadComposition({ browserProfileDir: await mkdtemp(join(tmpdir(), 'dsh-web-review-bridge-')) })
+      const host = `http://127.0.0.1:${String(port)}`
+      const created = await fetch(`${host}${PREVIEW_SESSIONS_PATH}`, {
+        method: 'POST',
+        headers: {
+          origin: host,
+          'content-type': 'application/json',
+          [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+        },
+        body: JSON.stringify({ target: `${fixtureUrl}/`, mode: 'browser' }),
+      })
+      const descriptor = previewSessionDescriptorOf(await created.json() as unknown)
+      if (descriptor === undefined) throw new Error('invalid browser descriptor')
+
+      // Open the stream first so the binding answer cannot be missed, then ask
+      // the page for its ready state through CDP evaluation.
+      const stream = await fetch(
+        `${host}${PREVIEW_BROWSER_STREAM_PATH}?sessionId=${descriptor.sessionId}&channel=${descriptor.channel}`,
+      )
+      const probe = await fetch(`${host}${PREVIEW_BROWSER_INPUT_PATH}`, {
+        method: 'POST',
+        headers: {
+          origin: host,
+          'content-type': 'application/json',
+          [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE,
+        },
+        body: JSON.stringify({
+          sessionId: descriptor.sessionId,
+          channel: descriptor.channel,
+          command: {
+            name: 'bridge',
+            payload: JSON.stringify({
+              protocol: 'dsh-web-review/bridge',
+              version: 1,
+              channel: descriptor.channel,
+              direction: 'host-to-frame',
+              requestId: 'probe-1',
+              command: { name: 'request-ready', payload: null },
+            }),
+          },
+        }),
+      })
+      expect(probe.status).toBe(200)
+
+      // The bridge answers the probe with a `ready` event and a `null` response.
+      const decode = (events: Array<Record<string, unknown>>): Array<Record<string, unknown>> => events
+        .filter(event => event.type === 'bridge')
+        .map(event => JSON.parse(String(event.payload)) as Record<string, unknown>)
+      const events = await readSseEvents(stream, collected => {
+        const payloads = decode(collected)
+        return payloads.some(payload => payload.requestId === 'probe-1')
+          && payloads.some(payload => (payload.event as { name?: string } | undefined)?.name === 'ready')
+      })
+      const payloads = decode(events)
+      const response = payloads.find(payload => payload.requestId === 'probe-1')
+      expect((response?.response as { ok?: boolean } | undefined)?.ok).toBe(true)
+      const ready = payloads.find(payload => (payload.event as { name?: string } | undefined)?.name === 'ready')
+      const readyState = (ready?.event as { payload?: Record<string, unknown> } | undefined)?.payload
+      expect(String(readyState?.pageUrl)).toContain(String(new URL(fixtureUrl).port))
+      expect(Number((readyState?.viewport as { width?: number } | undefined)?.width)).toBeGreaterThan(0)
+    },
+    90_000,
+  )
 })

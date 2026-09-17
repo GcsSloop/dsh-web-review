@@ -188,27 +188,41 @@ function targetOf(element: Element): PreviewElementTarget {
   }
 }
 
+/**
+ * Deliver one host-bound message on whichever transport this page runs on.
+ *
+ * A hosted preview iframe has a parent window to post to; a page that the
+ * plugin opened in a real browser has no parent, so the host installs a CDP
+ * binding (`Runtime.addBinding`) under this exact global name instead.
+ */
+function deliver(message: PreviewFrameEventMessage | PreviewFrameResponseMessage): void {
+  const send = (window as unknown as { __dshWebReviewSend?: unknown }).__dshWebReviewSend
+  if (typeof send === 'function') {
+    (send as (payload: string) => void)(JSON.stringify(message))
+    return
+  }
+  Reflect.apply(nativePostMessage, parent, [message, config.parentOrigin])
+}
+
 function postEvent(event: PreviewFrameEvent): void {
-  const message: PreviewFrameEventMessage = {
+  deliver({
     protocol: PREVIEW_BRIDGE_PROTOCOL,
     version: PREVIEW_BRIDGE_VERSION,
     channel: config.channel,
     direction: 'frame-to-host',
     event,
-  }
-  Reflect.apply(nativePostMessage, parent, [message, config.parentOrigin])
+  })
 }
 
 function postResponse(requestId: string, response: PreviewFrameResponseMessage['response']): void {
-  const message: PreviewFrameResponseMessage = {
+  deliver({
     protocol: PREVIEW_BRIDGE_PROTOCOL,
     version: PREVIEW_BRIDGE_VERSION,
     channel: config.channel,
     direction: 'frame-to-host',
     requestId,
     response,
-  }
-  Reflect.apply(nativePostMessage, parent, [message, config.parentOrigin])
+  })
 }
 
 function pageUrl(): string {
@@ -613,9 +627,8 @@ function execute(command: PreviewBridgeCommand): unknown {
   throw new Error('unsupported command')
 }
 
-window.addEventListener('message', (event) => {
-  if (event.source !== parent || event.origin !== config.parentOrigin) return
-  const value = event.data
+/** Execute one host command carried by either transport. */
+function receiveHostMessage(value: unknown): void {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return
   const record = value as Record<string, unknown>
   if (record.protocol !== PREVIEW_BRIDGE_PROTOCOL || record.version !== PREVIEW_BRIDGE_VERSION
@@ -631,7 +644,21 @@ window.addEventListener('message', (event) => {
       error: error instanceof Error ? error.message.slice(0, 500) : 'bridge command failed',
     })
   }
+}
+
+window.addEventListener('message', (event) => {
+  if (event.source !== parent || event.origin !== config.parentOrigin) return
+  receiveHostMessage(event.data)
 })
+
+// The host drives a real browser through CDP evaluation, which calls this
+// global with the JSON-encoded host message.
+;(window as unknown as { __dshWebReviewReceive?: unknown }).__dshWebReviewReceive = (raw: unknown): void => {
+  if (typeof raw !== 'string' || raw.length > 1_048_576) return
+  try {
+    receiveHostMessage(JSON.parse(raw) as unknown)
+  } catch { /* a malformed host payload is ignored */ }
+}
 
 function installPicker(): void {
   const style = document.createElement('style')

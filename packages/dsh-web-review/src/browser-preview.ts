@@ -19,6 +19,8 @@ import {
   type CdpPageHandlers,
 } from './cdp-transport.ts'
 import {
+  PREVIEW_BRIDGE_PROTOCOL,
+  PREVIEW_BRIDGE_VERSION,
   type PreviewBrowserRequest,
   type PreviewChannel,
   type PreviewSessionDescriptor,
@@ -34,6 +36,11 @@ const FRAME_QUALITY = 72
 
 /** Deployment-controlled browser launch options. */
 export interface BrowserPreviewOptions {
+  /**
+   * The isolated-frame bridge artifact, injected into every browser document so
+   * the picker, editor, and snapshot protocol runs unchanged in a real page.
+   */
+  bridgeSource: string
   /** Deployment switch; false keeps every preview on the isolated HTTP transport. */
   enabled?: boolean
   executable?: string
@@ -58,6 +65,7 @@ export type BrowserDispatchResult =
 interface BrowserSession {
   id: PreviewSessionId
   channel: PreviewChannel
+  parentOrigin: string
   targetOrigin: string
   page: CdpPage
   listeners: Set<(event: BrowserStreamEvent) => void>
@@ -78,6 +86,24 @@ export function defaultBrowserProfileDir(): string {
 
 function opaqueId(): string {
   return randomBytes(16).toString('hex')
+}
+
+/** One exact-Origin bridge bootstrap for a real browser document. */
+function bridgeBootstrap(session: {
+  channel: string
+  parentOrigin: string
+  targetOrigin: string
+  url: string
+}, source: string): string {
+  const config = JSON.stringify({
+    protocol: PREVIEW_BRIDGE_PROTOCOL,
+    version: PREVIEW_BRIDGE_VERSION,
+    channel: session.channel,
+    parentOrigin: session.parentOrigin,
+    pageUrl: session.url,
+    targetOrigin: session.targetOrigin,
+  }).replaceAll('<', '\\u003c')
+  return `window.__DSH_WEB_REVIEW_BRIDGE_CONFIG__=${config};\n${source}`
 }
 
 /**
@@ -213,6 +239,7 @@ export class BrowserPreviewSessions {
     const session: BrowserSession = {
       id: opaqueId() as PreviewSessionId,
       channel: opaqueId() as PreviewChannel,
+      parentOrigin,
       targetOrigin: new URL(target).origin,
       page,
       listeners: new Set(),
@@ -226,6 +253,10 @@ export class BrowserPreviewSessions {
     }
     holder.current = session
     this.sessions.set(session.id, session)
+    // The page-callable binding carries bridge messages up; the injected
+    // bootstrap gives the artifact its config and its host-bound transport.
+    await page.addBinding('__dshWebReviewSend')
+    await page.addInitScript(bridgeBootstrap(session, this.options.bridgeSource))
     await page.setViewport(session.width, session.height)
     await page.navigate(target)
     return {
