@@ -253,11 +253,11 @@ function installFrameBridge(options: {
       }))
     })
   })
-  const ready = (canGoBack = false, canGoForward = false): void => {
+  const ready = (canGoBack = false, canGoForward = false, pageUrl = 'http://localhost:5173/'): void => {
     emit({
       name: 'ready',
       payload: {
-        pageUrl: 'http://localhost:5173/',
+        pageUrl,
         title: 'Example Domain',
         viewport: { width: 800, height: 600 },
         canGoBack,
@@ -812,6 +812,30 @@ describe('PreviewTabBody', () => {
       undefined, '', factory, false)
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
     expect(calls).toEqual([])
+  })
+
+  it('treats a page redirect as the same session, not a navigation', async () => {
+    // A target that 302s (the login redirect) fires ready once per document with
+    // a changing URL. That must update the bar without starting a new session.
+    let created = 0
+    const store = renderView(vi.fn(async () => {}), '', vi.fn(), 'plain', {}, undefined, '',
+      (_target) => {
+        created += 1
+        return Promise.resolve({
+          sessionId: 'a'.repeat(32) as PreviewSessionId,
+          channel: 'b'.repeat(32) as PreviewChannel,
+          mode: 'proxy' as const,
+          frameOrigin: `http://${'a'.repeat(32)}.localhost:43123`,
+          frameUrl: `http://${'a'.repeat(32)}.localhost:43123${PREVIEW_ENTRY_PREFIX}x`,
+          targetOrigin: 'http://localhost:5173',
+        })
+      })
+    await act(async () => { store.actions.setUrl('http://localhost:5173/') })
+    const bridge = installFrameBridge()
+    await act(async () => { bridge.ready() })
+    await act(async () => { bridge.ready(false, false, 'http://localhost:5173/login?redirect=/') })
+    await act(async () => { bridge.ready(false, false, 'http://localhost:5173/login?redirect=/') })
+    expect(created).toBe(1)
   })
 
   it('does not loop when the transport keeps failing and props change identity', async () => {

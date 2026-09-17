@@ -389,6 +389,8 @@ export function PreviewTabBody({
   const [descriptor, setDescriptor] = useState<PreviewSessionDescriptor | null>(
     loadedPageUrl.current === null ? null : mountedSession?.descriptor ?? null,
   )
+  /** The session the live surface belongs to; stale surfaces are ignored. */
+  const activeSessionRef = useRef<string | null>(null)
   /**
    * The page this tab owns.
    *
@@ -705,6 +707,9 @@ export function PreviewTabBody({
     let bridge: PreviewBridgeClient | null = null
     const callbacks = {
       onReady: (ready: PreviewReadyState) => {
+        // A page that redirects fires ready once per document; those are all the
+        // same session, so they update the bar and never count as a navigation.
+        if (activeSessionRef.current !== descriptor.sessionId) return
         setPickerReady(true)
         setHistoryState({ canGoBack: ready.canGoBack, canGoForward: ready.canGoForward })
         loadedPageUrl.current = ready.pageUrl
@@ -713,7 +718,6 @@ export function PreviewTabBody({
         // Only the tab the user is looking at describes the session: another
         // preview tab's page must not rewrite the dock's context.
         if (!tabVisibleRef.current) return
-        actionsRef.current.setError(null)
         actionsRef.current.setTitle(ready.title)
         if (stateRef.current.url !== ready.pageUrl) actionsRef.current.setUrl(ready.pageUrl)
         if (editorRef.current !== null) setEditor(null)
@@ -750,14 +754,14 @@ export function PreviewTabBody({
     if (descriptor.mode === 'native') {
       const placeholder = nativeRef.current
       if (placeholder === null) return
+      activeSessionRef.current = descriptor.sessionId
       const surface = new NativeBrowserSurface(descriptor, {
         onState: (nativeState) => {
+          if (activeSessionRef.current !== descriptor.sessionId) return
           setHistoryState({ canGoBack: false, canGoForward: false })
-          setLoading(nativeState.loading)
           loadedPageUrl.current = nativeState.url
           if (nativeState.url !== '') { setLocalUrl(nativeState.url); setDraft(nativeState.url) }
           if (tabVisibleRef.current) {
-            actionsRef.current.setError(null)
             actionsRef.current.setTitle(nativeState.title)
             if (stateRef.current.url !== nativeState.url) actionsRef.current.setUrl(nativeState.url)
           }
@@ -777,6 +781,7 @@ export function PreviewTabBody({
       bridge.frameLoaded()
       return () => {
         if (bridgeRef.current === bridge) bridgeRef.current = null
+        if (activeSessionRef.current === descriptor.sessionId) activeSessionRef.current = null
         release(bridge?.dispose() ?? [])
         detach()
         surface.dispose()
@@ -786,16 +791,16 @@ export function PreviewTabBody({
     if (descriptor.mode === 'browser') {
       const canvas = canvasRef.current
       if (canvas === null) return
+      activeSessionRef.current = descriptor.sessionId
       const surface = new BrowserPreviewSurface(descriptor, {
         onState: (browserState) => {
+          if (activeSessionRef.current !== descriptor.sessionId) return
           // The real browser reports its own address and title, so the toolbar
           // follows the page without a bridge hop.
           setHistoryState({ canGoBack: false, canGoForward: false })
-          setLoading(browserState.loading)
           loadedPageUrl.current = browserState.url
           if (browserState.url !== '') { setLocalUrl(browserState.url); setDraft(browserState.url) }
           if (tabVisibleRef.current) {
-            actionsRef.current.setError(null)
             actionsRef.current.setTitle(browserState.title)
             if (stateRef.current.url !== browserState.url) actionsRef.current.setUrl(browserState.url)
           }
@@ -811,6 +816,7 @@ export function PreviewTabBody({
       bridge.frameLoaded()
       return () => {
         if (bridgeRef.current === bridge) bridgeRef.current = null
+        if (activeSessionRef.current === descriptor.sessionId) activeSessionRef.current = null
         release(bridge?.dispose() ?? [])
         detach()
         surface.dispose()
@@ -819,6 +825,7 @@ export function PreviewTabBody({
     }
     const frame = frameRef.current
     if (frame === null) return
+    activeSessionRef.current = descriptor.sessionId
     bridge = new PreviewBridgeClient(iframeCarrier(frame), descriptor, callbacks)
     bridgeRef.current = bridge
     // Arm the exact-source/exact-Origin listener before starting navigation:
@@ -827,6 +834,7 @@ export function PreviewTabBody({
     frame.src = descriptor.frameUrl
     return () => {
       if (bridgeRef.current === bridge) bridgeRef.current = null
+      if (activeSessionRef.current === descriptor.sessionId) activeSessionRef.current = null
       release(bridge?.dispose() ?? [])
     }
     // `tabKey` and the surfaces' refs are read through refs and stable ids.
