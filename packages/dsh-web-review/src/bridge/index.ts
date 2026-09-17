@@ -203,34 +203,111 @@ function targetOf(element: Element): PreviewElementTarget {
  * A hosted preview iframe has a parent window to post to; a page that the
  * plugin opened in a real browser has no parent, so the host installs a CDP
  * binding (`Runtime.addBinding`) under this exact global name instead.
+ *
+ * A native shell panel has neither: it reaches the host through the shell's
+ * script message handler (the only channel an HTTPS page may use, because WebKit
+ * blocks an insecure loopback request from a secure document) and falls back to
+ * the loopback endpoint for the HTTP case.
  */
 function deliver(message: PreviewFrameEventMessage | PreviewFrameResponseMessage): void {
+  const payload = JSON.stringify(message)
   const send = (window as unknown as { __dshWebReviewSend?: unknown }).__dshWebReviewSend
   if (typeof send === 'function') {
-    (send as (payload: string) => void)(JSON.stringify(message))
+    (send as (payload: string) => void)(payload)
     return
   }
-  // A native shell panel has no parent frame and no injected binding: the host
-  // names a loopback endpoint it owns. `no-cors` keeps it a simple request.
-  // A native shell panel names its endpoint either in the frozen config or in
-  // the bootstrap's own global; either one identifies the same loopback sink.
-  const nativeEndpoint = config.native?.endpoint ?? nativeEndpointGlobal()
-  if (nativeEndpoint !== undefined) {
-    const body = JSON.stringify(message)
-    try {
-      // `keepalive` is deliberately absent: WebKit rejects some keepalive
-      // combinations, and a beacon is the reliable fallback when fetch fails.
-      void fetch(nativeEndpoint, { method: 'POST', mode: 'no-cors', body }).catch((error: unknown) => {
-        noteNativeFailure(error)
-        try { navigator.sendBeacon?.(nativeEndpoint, body) } catch { /* nothing left to try */ }
-      })
-    } catch (error) {
-      noteNativeFailure(error)
-      try { navigator.sendBeacon?.(nativeEndpoint, body) } catch { /* nothing left to try */ }
-    }
+  if (deliverToNative(payload)) return
+  // The panel's handler is installed by the shell right after the webview
+  // exists, which can trail this document's first scripts by a moment: hold the
+  // message until a native channel answers instead of dropping the handshake.
+  if (isNativePanel()) {
+    queueNative(payload)
     return
   }
   Reflect.apply(nativePostMessage, parent, [message, config.parentOrigin])
+}
+
+/** The handler name the native bootstrap published, when it published one. */
+function nativeIpcMarker(): string | undefined {
+  const marker = (window as unknown as { __DSH_WEB_REVIEW_NATIVE_IPC__?: unknown }).__DSH_WEB_REVIEW_NATIVE_IPC__
+  return typeof marker === 'string' && marker !== '' ? marker : undefined
+}
+
+/** Whether this document was loaded by the shell's own browser panel. */
+function isNativePanel(): boolean {
+  return nativeIpcMarker() !== undefined || nativeEndpointGlobal() !== undefined
+}
+
+/** The shell's script message handler, once WebKit has exposed it. */
+function nativeIpcPost(marker: string | undefined): ((payload: string) => void) | undefined {
+  if (marker === undefined) return undefined
+  const handlers = (window as unknown as {
+    webkit?: { messageHandlers?: Record<string, { postMessage?: unknown } | undefined> }
+  }).webkit?.messageHandlers
+  const target = handlers?.[marker]
+  const post = target?.postMessage
+  if (typeof post !== 'function') return undefined
+  // A detached invocation throws "Illegal invocation" in WebKit.
+  return (payload: string) => { (post as (body: string) => void).call(target, payload) }
+}
+
+/** Try every native channel once; whether the endpoint accepted is unknowable. */
+function deliverToNative(payload: string): boolean {
+  if (!isNativePanel()) return false
+  const ipc = nativeIpcPost(nativeIpcMarker())
+  if (ipc !== undefined) {
+    try {
+      ipc(payload)
+      return true
+    } catch (error) {
+      noteNativeFailure(error)
+    }
+  }
+  const endpoint = config.native?.endpoint ?? nativeEndpointGlobal()
+  if (endpoint === undefined) return false
+  try {
+    // `keepalive` is deliberately absent: WebKit rejects some keepalive
+    // combinations, and a beacon is the fallback when fetch fails.
+    void fetch(endpoint, { method: 'POST', mode: 'no-cors', body: payload }).catch((error: unknown) => {
+      noteNativeFailure(error)
+      try { navigator.sendBeacon?.(endpoint, payload) } catch { /* nothing left to try */ }
+    })
+  } catch (error) {
+    noteNativeFailure(error)
+    try { navigator.sendBeacon?.(endpoint, payload) } catch { /* nothing left to try */ }
+  }
+  return true
+}
+
+/** Messages waiting for the panel's handler to be installed. */
+const nativeOutbox: string[] = []
+/** Bounded hold: the shell installs the handler milliseconds after the document. */
+const NATIVE_OUTBOX_ATTEMPTS = 50
+const NATIVE_OUTBOX_LIMIT = 64
+let nativeOutboxTimer: ReturnType<typeof setInterval> | undefined
+
+/** Hold one payload until a native channel can deliver it. */
+function queueNative(payload: string): void {
+  nativeOutbox.push(payload)
+  if (nativeOutbox.length > NATIVE_OUTBOX_LIMIT) nativeOutbox.shift()
+  if (nativeOutboxTimer !== undefined) return
+  let attempts = 0
+  nativeOutboxTimer = setInterval(() => {
+    attempts += 1
+    const ready = nativeIpcPost(nativeIpcMarker()) !== undefined
+      || (config.native?.endpoint ?? nativeEndpointGlobal()) !== undefined
+    if (!ready && attempts <= NATIVE_OUTBOX_ATTEMPTS) return
+    clearInterval(nativeOutboxTimer)
+    nativeOutboxTimer = undefined
+    if (!ready) {
+      nativeOutbox.length = 0
+      return
+    }
+    const pending = nativeOutbox.splice(0, nativeOutbox.length)
+    for (const item of pending) {
+      if (!deliverToNative(item)) nativeOutbox.push(item)
+    }
+  }, 100)
 }
 
 /** Record why a native delivery failed, for the host's diagnostics. */

@@ -31,7 +31,7 @@ import {
   type PreviewSessionId,
 } from './preview-contract.ts'
 import { BrowserPreviewSessions } from './browser-preview.ts'
-import { NativeBrowserSessions } from './native-browser.ts'
+import { NativeBrowserSessions, discoverNativePanel } from './native-browser.ts'
 import { startIsolatedPreviewServer, type IsolatedPreviewServer } from './preview-server.ts'
 import {
   readRequestBytes,
@@ -49,6 +49,8 @@ export const inject = ['webServer', 'agents', 'systemPrompt', 'skills']
 
 /** `/webview-annotations` exact route path (annotation state sync). */
 export const ANNOTATIONS_PREFIX = '/webview-annotations'
+/** `/webview-open-external` exact route path (hand a link to the system browser). */
+export const OPEN_EXTERNAL_PATH = '/webview-open-external'
 const MAX_PREVIEW_CONTROL_BODY = 16 * 1024
 
 /**
@@ -110,6 +112,11 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     }),
     'dsh-web-review: /webview-annotations route',
   )
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: OPEN_EXTERNAL_PATH,
+    handler: openExternalHandler(),
+  }), 'dsh-web-review: /webview-open-external route')
   ctx.on('agent/pre-step', ({ agent, messages, signal }, next) =>
     attachPendingAnnotationContext(annotations, agent, ctx.skills, signal, messages, next))
   ctx.on('session/event', (session, event) => {
@@ -379,6 +386,62 @@ function browserInputHandler(
     })
     const screenshot = 'screenshot' in result ? result.screenshot : undefined
     res.end(JSON.stringify(screenshot === undefined ? { ok: true } : { ok: true, screenshot }))
+  }
+}
+
+
+/**
+ * Route handler for `/webview-open-external`: hand one link to the system browser.
+ *
+ * The desktop shell's webview has no browser tab to give a `target="_blank"`
+ * click to, so the click would otherwise do nothing at all. The shell's own
+ * control API launches the system browser; a host without a shell answers
+ * `{ ok: false }` and the caller keeps its normal new-tab behavior.
+ */
+function openExternalHandler(): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { allow: 'POST', 'cache-control': 'no-store' })
+      res.end()
+      return
+    }
+    if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE
+      || !(req.headers['content-type'] ?? '').toString().toLowerCase().startsWith('application/json')) {
+      res.writeHead(415, { 'cache-control': 'no-store' })
+      res.end('preview client JSON required')
+      return
+    }
+    if (requestOrigin(req) === undefined) {
+      res.writeHead(403, { 'cache-control': 'no-store' })
+      res.end('same-origin browser request required')
+      return
+    }
+    const value = await jsonBody(req)
+    const record = exactRecord(value, ['url'])
+    const url = record?.url
+    if (typeof url !== 'string' || !isPreviewableUrl(url)) {
+      res.writeHead(400, { 'cache-control': 'no-store' })
+      res.end('a credential-free absolute HTTP(S) url is required')
+      return
+    }
+    let opened = false
+    const host = await discoverNativePanel()
+    if (host !== undefined) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${String(host.port)}/shell/open`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url }),
+          signal: AbortSignal.timeout(5_000),
+        })
+        const ack = response.ok ? await response.json() as { ok?: unknown } : undefined
+        opened = ack?.ok === true
+      } catch {
+        opened = false
+      }
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    res.end(JSON.stringify({ ok: opened }))
   }
 }
 

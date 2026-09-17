@@ -31,6 +31,24 @@ const SESSION_TTL_MS = 60 * 60 * 1_000
 const MAX_SESSIONS = 8
 /** Bounds the panel page may report. */
 const MAX_EVENT_BYTES = 1_048_576
+/**
+ * Script message handler name the shell installs on its panel webview.
+ *
+ * This is the page-to-host channel that works from an HTTPS document, where
+ * WebKit blocks the loopback fetch the endpoint below relies on.
+ */
+const NATIVE_IPC_HANDLER = 'dshWebReview'
+/**
+ * How long a panel may stay up with no client attached.
+ *
+ * A reload of the DSH page takes the client half with it while this half keeps
+ * running: without this, the shell's panel would stay drawn over the interface
+ * with nothing left able to close it. A sidebar tab switch detaches and
+ * re-attaches well inside this window, so the panel survives it untouched.
+ */
+const PANEL_IDLE_GRACE_MS = 4_000
+/** After this long with no client, the panel is taken down for good. */
+const PANEL_IDLE_CLOSE_MS = 60_000
 
 /** One event the panel page or the shell produced. */
 export type NativeStreamEvent =
@@ -65,6 +83,9 @@ interface NativeSession {
   targetOrigin: string
   target: string
   listeners: Set<(event: NativeStreamEvent) => void>
+  /** Hidden then closed once its client stops listening (see `watchDetach`). */
+  idleTimer: NodeJS.Timeout | undefined
+  closeTimer: NodeJS.Timeout | undefined
   opened: boolean
   touchedAt: number
   url: string
@@ -126,9 +147,11 @@ function opaqueId(): string {
 /**
  * One exact-Origin bridge bootstrap for a native panel document.
  *
- * It carries the transport the bridge artifact selects (a loopback endpoint this
- * module owns) and reports the page's address and title on load, because a
- * native panel has no frame and no host postMessage channel.
+ * It carries the transports the bridge artifact selects — the shell's script
+ * message handler first, because an HTTPS document may not request the insecure
+ * loopback endpoint, then that endpoint for the HTTP case — and reports the
+ * page's address and title on load, because a native panel has no frame and no
+ * host postMessage channel.
  */
 function nativeBootstrap(
   session: { channel: string; parentOrigin: string; targetOrigin: string; target: string },
@@ -147,10 +170,20 @@ function nativeBootstrap(
   const target = JSON.stringify(endpoint).replaceAll('<', '\\u003c')
   return `window.__DSH_WEB_REVIEW_BRIDGE_CONFIG__=${config};
 window.__DSH_WEB_REVIEW_NATIVE_ENDPOINT__=${target};
+window.__DSH_WEB_REVIEW_NATIVE_IPC__=${JSON.stringify(NATIVE_IPC_HANDLER)};
 window.__DSH_WEB_REVIEW_CHANNEL__=${JSON.stringify(session.channel)};
 (function(){
   var endpoint=${target};
-  function report(){ try{ fetch(endpoint,{method:'POST',mode:'no-cors',keepalive:true,body:JSON.stringify({type:'state',url:location.href,title:document.title,loading:false})}) }catch(error){} }
+  var name=${JSON.stringify(NATIVE_IPC_HANDLER)};
+  function sink(){
+    try{
+      var handlers=window.webkit&&window.webkit.messageHandlers;
+      var handler=handlers&&handlers[name];
+      if(handler&&typeof handler.postMessage==='function') return function(body){ handler.postMessage(body) };
+    }catch(error){}
+    return function(body){ try{ fetch(endpoint,{method:'POST',mode:'no-cors',body:body}) }catch(error){} };
+  }
+  function report(){ try{ sink()(JSON.stringify({type:'state',url:location.href,title:document.title,loading:false})) }catch(error){} }
   document.addEventListener('DOMContentLoaded',report);
   window.addEventListener('load',report);
 })();
@@ -336,6 +369,8 @@ export class NativeBrowserSessions {
       targetOrigin: new URL(target).origin,
       target: new URL(target).href,
       listeners: new Set(),
+      idleTimer: undefined,
+      closeTimer: undefined,
       opened: false,
       touchedAt: Date.now(),
       url: target,
@@ -358,8 +393,67 @@ export class NativeBrowserSessions {
     const session = this.sessionFor(id, channel)
     if (session === undefined) return undefined
     session.listeners.add(listener)
+    this.watchDetach(session)
     listener({ type: 'state', url: session.url, title: session.title, loading: session.loading })
-    return () => { session.listeners.delete(listener) }
+    return () => {
+      session.listeners.delete(listener)
+      this.watchDetach(session)
+    }
+  }
+
+  /**
+   * Keep the shell's panel in step with this half's own client.
+   *
+   * A reload of the DSH page destroys the client that owns the preview while this
+   * process keeps running, which used to leave the shell's panel drawn over the
+   * interface with nothing able to close it. With no listener attached for a
+   * grace period the panel is hidden, and closed outright after a longer one; a
+   * tab switch re-attaches well inside the grace period, so it survives.
+   */
+  private watchDetach(session: NativeSession): void {
+    if (session.listeners.size > 0) {
+      if (session.idleTimer !== undefined) clearTimeout(session.idleTimer)
+      if (session.closeTimer !== undefined) clearTimeout(session.closeTimer)
+      session.idleTimer = undefined
+      session.closeTimer = undefined
+      return
+    }
+    if (session.idleTimer !== undefined || session.closeTimer !== undefined) return
+    session.idleTimer = setTimeout(() => {
+      session.idleTimer = undefined
+      if (session.listeners.size > 0) return
+      void this.hide(session).catch(() => undefined)
+    }, PANEL_IDLE_GRACE_MS)
+    session.idleTimer.unref?.()
+    session.closeTimer = setTimeout(() => {
+      session.closeTimer = undefined
+      if (session.listeners.size > 0) return
+      void this.closeIdle(session).catch(() => undefined)
+    }, PANEL_IDLE_CLOSE_MS)
+    session.closeTimer.unref?.()
+  }
+
+  /** Hide the panel without touching the page. */
+  private async hide(session: NativeSession): Promise<void> {
+    if (!session.opened) return
+    const host = await discoverNativePanel()
+    if (host === undefined) return
+    await this.call(host, '/panel/bounds', { x: 0, y: 0, width: 0, height: 0, visible: false })
+  }
+
+  /** Close the panel and forget the session (the idle path, not shutdown). */
+  private async closeIdle(session: NativeSession): Promise<void> {
+    if (session.listeners.size > 0) return
+    if (session.idleTimer !== undefined) clearTimeout(session.idleTimer)
+    if (session.closeTimer !== undefined) clearTimeout(session.closeTimer)
+    session.idleTimer = undefined
+    session.closeTimer = undefined
+    const host = await discoverNativePanel()
+    if (host !== undefined && session.opened) {
+      await this.call(host, '/panel/command', { kind: 'close' })
+    }
+    session.opened = false
+    this.sessions.delete(session.id)
   }
 
   /** Place (and on first use create) the shell panel for one session. */
@@ -383,6 +477,9 @@ export class NativeBrowserSessions {
         width: bounds.width,
         height: bounds.height,
         bootstrap: nativeBootstrap(session, endpoint, this.bridgeSource),
+        // The shell relays the page's script messages here; a secure page cannot
+        // reach this endpoint itself.
+        endpoint,
       })
       if (!opened.ok) return opened
       session.opened = true

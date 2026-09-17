@@ -702,11 +702,11 @@ describe('PreviewTabBody', () => {
     const annotateButton = screen.getByRole('button', { name: zh['panel.pick'] })
     const address = screen.getByPlaceholderText(zh['panel.urlPlaceholder'])
 
-    // Back and forward lead the row; reload and the annotation entry close it.
+    // History and reload lead the row; the annotation entry closes it.
     expect(backButton.compareDocumentPosition(forwardButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(forwardButton.compareDocumentPosition(address) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(address.compareDocumentPosition(refreshButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(refreshButton.compareDocumentPosition(annotateButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(forwardButton.compareDocumentPosition(refreshButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(refreshButton.compareDocumentPosition(address) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(address.compareDocumentPosition(annotateButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     fireEvent.click(backButton)
     fireEvent.click(forwardButton)
@@ -743,6 +743,27 @@ describe('PreviewTabBody', () => {
     await waitFor(() => { expect(store.getSnapshot().url).toBe('http://localhost:5173/docs') })
     const address = screen.getByPlaceholderText(zh['panel.urlPlaceholder']) as HTMLInputElement
     expect(address.value).toBe('http://localhost:5173/docs')
+  })
+
+  it('asks the host shell to open a link externally, and reports when it cannot', async () => {
+    const { openExternalLink } = await import('../src/client/open-external.ts')
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(openExternalLink('http://localhost:5173/')).resolves.toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith('/webview-open-external', expect.objectContaining({ method: 'POST' }))
+
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ ok: false }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    await expect(openExternalLink('http://localhost:5173/')).resolves.toBe(false)
+
+    fetchMock.mockImplementation(async () => { throw new Error('offline') })
+    await expect(openExternalLink('http://localhost:5173/')).resolves.toBe(false)
+    vi.unstubAllGlobals()
   })
 
   it('re-attaches to the live session when its tab body remounts', async () => {

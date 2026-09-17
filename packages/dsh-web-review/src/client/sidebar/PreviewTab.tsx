@@ -54,6 +54,7 @@ import {
   type ElementNavigationFeedback,
 } from '../AnnotationEditor.tsx'
 import { normalizePreviewUrl } from '../navigation-url.ts'
+import { openExternalLink } from '../open-external.ts'
 import type { WebviewStore } from '../stores.ts'
 import type { FloatingEditorPosition, FloatingEditorSize } from '../floating-position.ts'
 import { readEditorSize, writeEditorSize } from '../editor-size-memory.ts'
@@ -749,6 +750,8 @@ export function PreviewTabBody({
   const surfaceElement: HTMLElement | null = descriptor?.mode === 'native'
     ? nativeRef.current
     : descriptor?.mode === 'browser' ? canvasRef.current : frameRef.current
+  /** The desktop shell renders this preview in its own panel. */
+  const shellHosted = descriptor?.mode === 'native'
   const pickDisabled = !pickerReady || state.url === ''
   const visibleError = state.annotationSync.status === 'error' ? state.annotationSync.message : state.error ?? error
   const inputBusy = input.phase === 'adjudicating' || input.phase === 'submitting'
@@ -871,6 +874,16 @@ export function PreviewTabBody({
             >
               <IconChevronRightOutline14 size={16} />
             </button>
+            <button
+              type="button"
+              className={css.icon}
+              aria-label={t('panel.refresh')}
+              title={t('panel.refresh')}
+              disabled={state.url === ''}
+              onClick={() => { bridgeRef.current?.reload() }}
+            >
+              <IconRefreshOutline16 size={16} />
+            </button>
             <div className={css.urlField}>
               <Input
                 className={css.url ?? ''}
@@ -891,21 +904,21 @@ export function PreviewTabBody({
                   rel="noopener noreferrer"
                   aria-label={t('panel.external')}
                   title={t('panel.external')}
+                  onClick={(event) => {
+                    // The shell's panel has no browser tab to land in: ask the
+                    // shell for the system browser, and keep the ordinary
+                    // new-tab path anywhere else.
+                    if (!shellHosted) return
+                    event.preventDefault()
+                    void openExternalLink(state.url).then((opened) => {
+                      if (!opened) window.open(state.url, '_blank', 'noopener,noreferrer')
+                    })
+                  }}
                 >
                   <IconRightUpOutline16 size={12} />
                 </a>
               )}
             </div>
-            <button
-              type="button"
-              className={css.icon}
-              aria-label={t('panel.refresh')}
-              title={t('panel.refresh')}
-              disabled={state.url === ''}
-              onClick={() => { bridgeRef.current?.reload() }}
-            >
-              <IconRefreshOutline16 size={16} />
-            </button>
             <button
               type="button"
               className={clsx(css.icon, css.commentIcon)}

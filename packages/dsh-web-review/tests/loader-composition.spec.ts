@@ -1022,10 +1022,16 @@ describe('native panel transport (fake shell + real composition)', () => {
         expect(bootstrap).toContain('__DSH_WEB_REVIEW_BRIDGE_CONFIG__')
         // The config names the native transport the bridge artifact selects.
         expect(bootstrap).toContain('"native":{"endpoint":"http://127.0.0.1:')
+        // A secure page may not request that endpoint, so the bootstrap also
+        // names the shell's script message handler, the channel that works.
+        expect(bootstrap).toContain('window.__DSH_WEB_REVIEW_NATIVE_IPC__="dshWebReview"')
+        expect(bootstrap).toContain('window.webkit&&window.webkit.messageHandlers')
 
         // The bootstrap names the loopback endpoint the page reports to.
         const endpoint = /http:\/\/127\.0\.0\.1:\d+\/native-event\?sessionId=[a-f\d]{32}&channel=[a-f\d]{32}/u.exec(bootstrap)?.[0]
         if (endpoint === undefined) throw new Error('bootstrap has no native endpoint')
+        // The shell relays the page's script messages to that same endpoint.
+        expect(opened?.body.endpoint).toBe(endpoint)
 
         // The shell only moves the panel after it exists.
         await post(host, { ...session, input: { kind: 'bounds', x: 11, y: 21, width: 801, height: 601, visible: true } })
