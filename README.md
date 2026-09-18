@@ -22,7 +22,7 @@
 安装并启动：
 
 ```sh
-dsh plugin --profile web add @canglongcl/dsh-web-review
+dsh plugin --profile web add dsh-web-review
 dsh web
 ```
 

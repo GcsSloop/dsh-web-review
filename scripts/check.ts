@@ -24,9 +24,9 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const PKG = join(ROOT, 'packages', 'dsh-web-review')
 const DIST = join(ROOT, 'dist')
 const OFFICIAL = join(DIST, 'package')
-const EXPECTED_PACKAGE_NAME = '@canglongcl/dsh-web-review'
+const EXPECTED_PACKAGE_NAME = 'dsh-web-review'
 const EXPECTED_REGISTRY = 'https://registry.npmjs.org/'
-const EXPECTED_REPOSITORY = 'git+https://github.com/CanglongCl/dsh-web-review.git'
+const EXPECTED_REPOSITORY = 'git+https://github.com/GcsSloop/dsh-web-review.git'
 const LOCKFILE = readFileSync(join(ROOT, 'pnpm-lock.yaml'), 'utf8')
 const EXPECTED_PUBLIC_DEVELOPMENT_VERSIONS: Record<string, string> = {
   '@deepseek-ai/cordis': '4.0.2',

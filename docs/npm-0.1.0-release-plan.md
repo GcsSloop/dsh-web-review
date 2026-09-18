@@ -1,12 +1,12 @@
 # npm 0.1.0 Release Plan
 
-This plan publishes `@canglongcl/dsh-web-review@0.1.0` as the first public stable package. Pushing this document or its branch does not authorize merging, tagging, or publishing.
+This plan publishes `dsh-web-review@0.1.0` as the first public stable package. Pushing this document or its branch does not authorize merging, tagging, or publishing.
 
 ## 1. Prepare version 0.1.0
 
 - Set the root and plugin package versions to `0.1.0`.
 - Update README installation examples, tarball names, tag commands, and version-pinned tests.
-- Keep the package name `@canglongcl/dsh-web-review`.
+- Keep the package name `dsh-web-review`.
 - Keep the source workspace manifest `private: true` so the source package cannot be published directly.
 - Require the staged manifest and workflow publish command to use `access: public`.
 - Commit the release preparation separately, for example:
@@ -31,14 +31,14 @@ Confirm that typechecking, unit/component tests, all browser E2E scenarios, pack
 
 ```sh
 pnpm package:official
-dsh plugin --profile web add "$PWD/dist/canglongcl-dsh-web-review-0.1.0.tgz"
+dsh plugin --profile web add "$PWD/dist/dsh-web-review-0.1.0.tgz"
 dsh --profile web --dump-config
 dsh web
 ```
 
 Inspect the staged manifest before approval:
 
-- name is `@canglongcl/dsh-web-review`;
+- name is `dsh-web-review`;
 - version is `0.1.0`;
 - `private` is absent;
 - `publishConfig.registry` is `https://registry.npmjs.org/`;
@@ -76,9 +76,9 @@ The tag is the irreversible publication trigger. Do not reuse or move it.
 ## 7. Verify the registry release
 
 ```sh
-npm view @canglongcl/dsh-web-review@0.1.0 \
+npm view dsh-web-review@0.1.0 \
   name version dist-tags dist.integrity
-dsh plugin --profile web add @canglongcl/dsh-web-review@0.1.0
+dsh plugin --profile web add dsh-web-review@0.1.0
 dsh --profile web --dump-config
 ```
 

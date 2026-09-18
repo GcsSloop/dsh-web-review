@@ -145,7 +145,7 @@ jobs:
           PACKAGE_FILE="$package_file" node -e '
             const fs = require("node:fs");
             const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-            if (manifest.name !== "@canglongcl/dsh-web-review") throw new Error(`unexpected package ${manifest.name}`);
+            if (manifest.name !== "dsh-web-review") throw new Error(`unexpected package ${manifest.name}`);
             if (manifest.publishConfig?.access !== "public") throw new Error("package is not public");
             if (`refs/tags/v${manifest.version}` !== process.env.GITHUB_REF) throw new Error("tag/version mismatch");
             const version = String(manifest.version);

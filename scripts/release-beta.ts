@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const PACKAGE_NAME = '@canglongcl/dsh-web-review'
+const PACKAGE_NAME = 'dsh-web-review'
 const MANIFESTS: [string, string] = [
   join(root, 'package.json'),
   join(root, 'packages', 'dsh-web-review', 'package.json'),

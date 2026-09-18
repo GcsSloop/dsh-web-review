@@ -5,7 +5,7 @@
 ## 发布边界
 
 - 源码包保持 `private: true`。
-- npm 包名保持 `@canglongcl/dsh-web-review`，正式 tarball 的发布访问级别必须为 `public`。
+- npm 包名保持 `dsh-web-review`，正式 tarball 的发布访问级别必须为 `public`。
 - 不要在仓库文件、命令参数、日志或截图中写入真实令牌和 provider 凭据。
 
 完整且具有约束力的工程规则见 [AGENTS.md](./AGENTS.md)。修改协议、加载方式或安全边界前必须先阅读该文件。
@@ -79,7 +79,7 @@ pnpm dev:acceptance
 
 ### 加载方式
 
-- 开发环境以真实包名 `@canglongcl/dsh-web-review`（profile-local 软链）加载外部 checkout —— alpha.5 要求 loader 行名等于 package.json name（DSH-0.1.2-A1-26），不再使用 development alias。
+- 开发环境以真实包名 `dsh-web-review`（profile-local 软链）加载外部 checkout —— alpha.5 要求 loader 行名等于 package.json name（DSH-0.1.2-A1-26），不再使用 development alias。
 - `scripts/profile-plugin-link.ts` 在 Web profile 下维护对应 symlink；非 symlink 占用该路径时会失败，不会覆盖。
 - `cordis.yml` 只通过 `dsh web --patch` 增加本插件，不修改 Harness profile 或源码。
 - 开发 bundle 和正式 bundle 使用不同的 loader ID，不能混用。
@@ -190,7 +190,7 @@ git push personal v<version>
 - 校验新版本高于 npm 上已发布的 `beta` / `latest`；
 - 重新生成 `CHANGELOG.md`（`--next` 小节）并写入两份 manifest，运行 `pnpm release:verify`，提交包含 `CHANGELOG.md` 的 `release: bump <version>`，打 `v<version>` 注释 tag 并推送到 origin。
 
-tag 推送后 CI 自动打包、发布到 `beta` dist-tag 并创建同名 GitHub Release，用户可用 `npm i @canglongcl/dsh-web-review@beta` 安装。`--dry-run` 只打印计划，不修改任何文件。
+tag 推送后 CI 自动打包、发布到 `beta` dist-tag 并创建同名 GitHub Release，用户可用 `npm i dsh-web-review@beta` 安装。`--dry-run` 只打印计划，不修改任何文件。
 
 Trusted Publisher 与 CI 边界的详细配置以 [AGENTS.md](./AGENTS.md) 为准。发布 workflow 不保存 npm 写令牌。
 

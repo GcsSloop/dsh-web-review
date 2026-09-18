@@ -24,7 +24,7 @@ describe('source package row import (alpha.5 Loader resolution path)', () => {
     materializeProfilePluginLink(REPO_ROOT, dshHome)
     const profile = join(dshHome, 'profiles', 'web')
     const script = [
-      'const m = await import("@canglongcl/dsh-web-review")',
+      'const m = await import("dsh-web-review")',
       'console.log(JSON.stringify({ name: m.name, inject: m.inject, hasApply: typeof m.apply === "function" }))',
     ].join('; ')
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {

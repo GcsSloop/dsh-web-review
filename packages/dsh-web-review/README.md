@@ -1,4 +1,4 @@
-# @canglongcl/dsh-web-review
+# dsh-web-review
 
 External `dsh web` plugin that adds a Preview conversation tab, isolated
 per-session page proxy, in-frame element picker, and browser-comment context

@@ -24,7 +24,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const REPOSITORY = 'CanglongCl/dsh-web-review'
+const REPOSITORY = 'GcsSloop/dsh-web-review'
 const CHANGELOG_PATH = join(root, 'CHANGELOG.md')
 
 export const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/u

@@ -6,9 +6,9 @@
  * match that row, so the checkout is linked into the active profile under its
  * real npm name instead of a development-only alias.
  */
-export const DEVELOPMENT_ENTRY_NAME = '@canglongcl/dsh-web-review'
+export const DEVELOPMENT_ENTRY_NAME = 'dsh-web-review'
 
 /** Stable public npm identity used by the official profile bundle. */
-export const OFFICIAL_PACKAGE_NAME = '@canglongcl/dsh-web-review'
+export const OFFICIAL_PACKAGE_NAME = 'dsh-web-review'
 
 

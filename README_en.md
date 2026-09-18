@@ -22,7 +22,7 @@ Select page elements in the built-in browser as you would in a design tool, leav
 Install the plugin and start DSH:
 
 ```sh
-dsh plugin --profile web add @canglongcl/dsh-web-review
+dsh plugin --profile web add dsh-web-review
 dsh web
 ```
 
