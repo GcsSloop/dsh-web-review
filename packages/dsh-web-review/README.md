@@ -7,7 +7,7 @@ including assistant-authored public, LAN, and loopback links. Each page runs on
 a random `*.localhost` Origin and talks to the host through a bounded,
 versioned `postMessage` bridge; page JavaScript never shares the DSH host
 Origin.
-The harness checkout is not modified.
+The harness checkout is not modified. Forked from [CanglongCl/dsh-web-review](https://github.com/CanglongCl/dsh-web-review). The desktop `native` preview (in-shell WKWebView panel) additionally requires the [deepseek-harness-desktop](https://github.com/GcsSloop/deepseek-harness-desktop) shell; without it, preview falls back to the real-browser (CDP) or proxy transport.
 
 See the repository [AGENTS.md](../../AGENTS.md) for loading, isolation, bridge, picker,
 context, and testing contracts. The accepted implementation design lives in

@@ -92,6 +92,11 @@ dsh web
 
 评测设计、运行方式和结果解释见 [Eval suite](./eval/README.md)。
 
+## 项目来源与依赖
+
+- 本项目 fork 自 [CanglongCl/dsh-web-review](https://github.com/CanglongCl/dsh-web-review)，在此感谢上游作者。
+- 桌面端 `native` 预览模式（原生 WKWebView 面板）依赖 [deepseek-harness-desktop](https://github.com/GcsSloop/deepseek-harness-desktop) 壳配合；未安装该壳时，预览自动回退到真实浏览器（CDP）或代理模式。
+
 ## 参与开发
 
 开发环境、架构说明与验证流程见 [CONTRIBUTING.md](./CONTRIBUTING.md)。

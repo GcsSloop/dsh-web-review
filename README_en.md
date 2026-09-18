@@ -92,6 +92,11 @@ The suite covers:
 
 See [Eval suite](./eval/README.md) for the evaluation design, commands, and guidance on interpreting results.
 
+## Origin and Dependencies
+
+- This project is forked from [CanglongCl/dsh-web-review](https://github.com/CanglongCl/dsh-web-review); thanks to the upstream author.
+- The desktop `native` preview mode (the in-shell WKWebView panel) requires the [deepseek-harness-desktop](https://github.com/GcsSloop/deepseek-harness-desktop) shell; without it, preview falls back to the real-browser (CDP) or proxy transport.
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, architecture notes, and verification workflows.
