@@ -183,6 +183,10 @@ window.__DSH_WEB_REVIEW_CHANNEL__=${JSON.stringify(session.channel)};
   var name=${JSON.stringify(NATIVE_IPC_HANDLER)};
   function sink(){
     try{
+      var host=window.chrome&&window.chrome.webview;
+      if(host&&typeof host.postMessage==='function') return function(body){ host.postMessage(body) };
+    }catch(error){}
+    try{
       var handlers=window.webkit&&window.webkit.messageHandlers;
       var handler=handlers&&handlers[name];
       if(handler&&typeof handler.postMessage==='function') return function(body){ handler.postMessage(body) };

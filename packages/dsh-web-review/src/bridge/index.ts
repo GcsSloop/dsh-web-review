@@ -238,9 +238,23 @@ function isNativePanel(): boolean {
   return nativeIpcMarker() !== undefined || nativeEndpointGlobal() !== undefined
 }
 
-/** The shell's script message handler, once WebKit has exposed it. */
+/**
+ * The shell's native message channel, once the host webview has exposed it.
+ *
+ * The two host webviews differ: WebKit (macOS) exposes a named
+ * `WKScriptMessageHandler` under `webkit.messageHandlers`, while WebView2
+ * (Windows) exposes one unnamed channel per webview under `chrome.webview`.
+ * Both reach the same relay in the shell, so the payload shape is identical.
+ */
 function nativeIpcPost(marker: string | undefined): ((payload: string) => void) | undefined {
   if (marker === undefined) return undefined
+  const host = (window as unknown as {
+    chrome?: { webview?: { postMessage?: unknown } }
+  }).chrome?.webview
+  if (typeof host?.postMessage === 'function') {
+    const post = host.postMessage
+    return (payload: string) => { (post as (body: string) => void).call(host, payload) }
+  }
   const handlers = (window as unknown as {
     webkit?: { messageHandlers?: Record<string, { postMessage?: unknown } | undefined> }
   }).webkit?.messageHandlers
