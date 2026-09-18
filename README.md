@@ -19,12 +19,51 @@
 
 ## 安装
 
-安装并启动：
+### 1. 安装桌面壳
+
+从 [deepseek-harness-desktop Releases](https://github.com/GcsSloop/deepseek-harness-desktop/releases) 下载对应平台的安装包：
+
+| 平台 | 文件 |
+|---|---|
+| macOS（Apple Silicon） | `DeepSeek.Harness_<版本>_aarch64.dmg` |
+| Windows（x64） | `DeepSeek.Harness_<版本>_x64-setup.exe`（或同名 `.msi`） |
+
+壳内置 Node 运行时与 Harness 本体，装完即可使用，**无需另行安装 Node.js 或 DSH**。插件不装壳也能用，只是没有「壳内原生面板」这一档，预览会自动回退到真实浏览器（CDP）或隔离代理模式。
+
+### 2. 安装插件
+
+`dsh plugin` 会把参数转发给 pnpm，所以需要 **pnpm 在 PATH 上**（壳内置的 Node 不含 npm/pnpm）：
 
 ```sh
-dsh plugin --profile web add dsh-web-review
-dsh web
+brew install pnpm          # macOS
+# 或任意平台：npm i -g pnpm
 ```
+
+然后用**桌面壳自带的运行时**执行安装，无需全局安装 `dsh`。
+
+macOS：
+
+```sh
+app="/Applications/DeepSeek Harness.app"
+"$app/Contents/Resources/resources/node/bin/node" \
+  "$app/Contents/Resources/resources/harness/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+  plugin --profile web add dsh-web-review
+```
+
+Windows（PowerShell；默认安装在 `%LOCALAPPDATA%\DeepSeek Harness`，若改过安装位置请替换 `$app`）：
+
+```powershell
+$app = "$env:LOCALAPPDATA\DeepSeek Harness"
+& "$app\resources\node\node.exe" `
+  "$app\resources\harness\node_modules\@deepseek-ai\dsh\lib\bin.js" `
+  plugin --profile web add dsh-web-review
+```
+
+> 如果已经把 `dsh` 装到 PATH 上（`npm i -g @deepseek-ai/dsh`），直接 `dsh plugin --profile web add dsh-web-review` 是完全等价的。
+
+### 3. 启动
+
+打开桌面壳应用即可：它会自动启动本地 Harness 服务并打开 Web UI，不需要手动执行 `dsh web`。
 
 ## 使用方法
 

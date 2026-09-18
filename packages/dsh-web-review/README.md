@@ -17,6 +17,38 @@ rollback contract is specified in
 with the researched control grammar in
 [docs/figma-property-editor-plan.md](../../docs/figma-property-editor-plan.md).
 
+## Install
+
+The in-shell native panel comes from the
+[deepseek-harness-desktop](https://github.com/GcsSloop/deepseek-harness-desktop/releases)
+shell (macOS arm64 or Windows x64). Without it the plugin still works and falls
+back to the real-browser (CDP) or proxy transport.
+
+`dsh plugin` forwards its arguments to pnpm, so `pnpm` must be on PATH (the
+shell's bundled Node ships neither npm nor pnpm). The plugin is then added
+through the shell's own bundled runtime, so no global `dsh` install is needed.
+
+macOS:
+
+```sh
+app="/Applications/DeepSeek Harness.app"
+"$app/Contents/Resources/resources/node/bin/node" \
+  "$app/Contents/Resources/resources/harness/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+  plugin --profile web add dsh-web-review
+```
+
+Windows (PowerShell; the default install root is `%LOCALAPPDATA%\DeepSeek Harness`):
+
+```powershell
+$app = "$env:LOCALAPPDATA\DeepSeek Harness"
+& "$app\resources\node\node.exe" `
+  "$app\resources\harness\node_modules\@deepseek-ai\dsh\lib\bin.js" `
+  plugin --profile web add dsh-web-review
+```
+
+With `dsh` already on PATH (`npm i -g @deepseek-ai/dsh`), plain
+`dsh plugin --profile web add dsh-web-review` is equivalent.
+
 ## Usage
 
 ```bash

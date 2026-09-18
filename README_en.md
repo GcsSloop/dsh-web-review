@@ -19,12 +19,59 @@ Select page elements in the built-in browser as you would in a design tool, leav
 
 ## Installation
 
-Install the plugin and start DSH:
+### 1. Install the desktop shell
+
+Download the installer for your platform from
+[deepseek-harness-desktop Releases](https://github.com/GcsSloop/deepseek-harness-desktop/releases):
+
+| Platform | File |
+|---|---|
+| macOS (Apple Silicon) | `DeepSeek.Harness_<version>_aarch64.dmg` |
+| Windows (x64) | `DeepSeek.Harness_<version>_x64-setup.exe` (or the matching `.msi`) |
+
+The shell bundles its own Node runtime and the Harness itself, so nothing else
+needs to be installed. The plugin also works without the shell; it simply loses
+the in-shell native panel and falls back to the real-browser (CDP) or proxy
+transport.
+
+### 2. Install the plugin
+
+`dsh plugin` forwards its arguments to pnpm, so **pnpm must be on PATH** (the
+shell's bundled Node ships neither npm nor pnpm):
 
 ```sh
-dsh plugin --profile web add dsh-web-review
-dsh web
+brew install pnpm          # macOS
+# or anywhere: npm i -g pnpm
 ```
+
+Then install through the shell's own bundled runtime — no global `dsh` needed.
+
+macOS:
+
+```sh
+app="/Applications/DeepSeek Harness.app"
+"$app/Contents/Resources/resources/node/bin/node" \
+  "$app/Contents/Resources/resources/harness/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+  plugin --profile web add dsh-web-review
+```
+
+Windows (PowerShell; the default install root is `%LOCALAPPDATA%\DeepSeek Harness` —
+adjust `$app` if you installed elsewhere):
+
+```powershell
+$app = "$env:LOCALAPPDATA\DeepSeek Harness"
+& "$app\resources\node\node.exe" `
+  "$app\resources\harness\node_modules\@deepseek-ai\dsh\lib\bin.js" `
+  plugin --profile web add dsh-web-review
+```
+
+> If `dsh` is already on your PATH (`npm i -g @deepseek-ai/dsh`), plain
+> `dsh plugin --profile web add dsh-web-review` is exactly equivalent.
+
+### 3. Start
+
+Open the desktop shell: it starts the local Harness service and opens the Web UI
+on its own, so there is no need to run `dsh web` by hand.
 
 ## Usage
 
