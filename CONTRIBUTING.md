@@ -2,6 +2,11 @@
 
 本文面向 `dsh-web-review` 的维护者和贡献者，介绍本地开发、技术架构、验证与公开发布流程。普通用户请阅读 [README.md](./README.md)。
 
+## 项目来源与依赖
+
+- **来源仓库**：本项目 fork 自 [CanglongCl/dsh-web-review](https://github.com/CanglongCl/dsh-web-review)。
+- **壳依赖**：桌面端 `native` 预览模式（壳内原生 WKWebView 面板）需要 [deepseek-harness-desktop](https://github.com/GcsSloop/deepseek-harness-desktop) 配合。该壳通过环回控制 API 提供面板能力（端点写入 `$DSH_HOME/web-review/native-browser.json`），并额外提供「全屏时忽略 ESC」的 AppKit 事件监视器。未安装该壳时，预览自动回退到真实浏览器（CDP）或代理模式，插件其余功能不受影响。
+
 ## 发布边界
 
 - 源码包保持 `private: true`。
