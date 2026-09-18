@@ -5,6 +5,50 @@ All notable changes to `dsh-web-review` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-09-18
+
+### Changed
+
+- **webview:** restore the state.url-driven preview loading
+- one preview tab per page, and a session that heals itself
+- make the right Sidebar the preview home, with annotation
+- host the native panel in the right-Sidebar tab
+- place the native panel and capture it natively
+- drive the desktop shell's native browser panel
+- never let the optional right-Sidebar host break the client
+- host the preview in an optional right-Sidebar tab
+- run the annotation bridge inside the real browser
+- render browser-mode previews on a canvas surface
+- serve browser-mode preview sessions over CDP and SSE
+- add the dependency-free CDP transport for real-browser preview
+
+### Fixed
+
+- **webview:** a page redirect must never change the session target
+- **webview:** create a preview session even while its tab is not yet marked visible
+- **webview:** stop page redirects from flickering or freezing the preview
+- **webview:** keep each preview tab's page and panel to itself
+- **webview:** stop the preview from re-creating its session on every render
+- **webview:** make the transport ladder actually fall back, and name the proxy
+- **webview:** fall back to a single page tab when a host refuses the address
+- **bridge:** install the picker when the bridge runs before any element exists
+- **webview:** keep a legacy preview tab on the page it was showing
+- **webview:** keep the panel rect honest when the pane only moves
+- **webview:** deliver panel messages over the shell handler, and stop orphaning the panel
+- **webview:** release a session the tab replaced instead of letting it idle
+- **webview:** keep the native panel rect in step with the host layout
+- **webview:** carry the bridge artifact's own message over the native sink
+- **webview:** make typing work and keep an idle preview sharp
+- **webview:** render path-aware and login-gated pages in Preview
+
+### Internal
+
+- **release:** rename package to dsh-web-review and freeze v1.0.0
+- **webview:** surface the in-flight transport and the exact failure
+- **webview:** flag the browser suite's unrun sidebar entry step
+- **webview:** document the right-Sidebar preview home
+- record the real-browser transport and the right-Sidebar tab
+
 ## [0.6.0] - 2026-09-05
 
 ## [0.6.0-beta.0] - 2026-09-02
@@ -141,53 +185,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-08-13
 
-### Internal
-
-- trust reviewed release lockfile
-- use public DSH npm packages
-- add English README
-- streamline user-facing README
-- prepare public npm installation guide
-- separate user and contributor guides
-- add npm 0.1.0 release plan
-- publish package publicly
-- add local tarball installation smoke test
-- publish privately under canglongcl
-- use private npm development packages
-
-## [0.0.4-rc.2] - 2026-08-13
-
-### Internal
-
-- release 0.0.4-rc.2
-- add target ownership and text identity to annotation context
-
-## [0.0.4-rc.1] - 2026-08-12
-
-### Internal
-
-- add built-in UI skills
-- add private npm release workflow
-- isolate remote previews by origin
-- add element tree scroll affordance
-- align acceptance launcher with 0811
-- support harness 0811 contracts
-- add movable resizable annotation editor
-- add CSS keyword menus and acceptance history
-- harden TypeScript boundaries
-- ignore absent-agent clears
-- refine corner radius glyphs
-
-## [0.0.3] - 2026-08-11
-
-### Internal
-
-- release v0.0.3
-- animate element selection feedback
-- add README demo
-
-## [0.0.2] - 2026-08-11
-
 ### Changed
 
 - native browser context injection and annotation dock
@@ -206,6 +203,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- trust reviewed release lockfile
+- use public DSH npm packages
+- add English README
+- streamline user-facing README
+- prepare public npm installation guide
+- separate user and contributor guides
+- add npm 0.1.0 release plan
+- publish package publicly
+- add local tarball installation smoke test
+- publish privately under canglongcl
+- use private npm development packages
+- release 0.0.4-rc.2
+- add target ownership and text identity to annotation context
+- add built-in UI skills
+- add private npm release workflow
+- isolate remote previews by origin
+- add element tree scroll affordance
+- align acceptance launcher with 0811
+- support harness 0811 contracts
+- add movable resizable annotation editor
+- add CSS keyword menus and acceptance history
+- harden TypeScript boundaries
+- ignore absent-agent clears
+- refine corner radius glyphs
+- release v0.0.3
+- animate element selection feedback
+- add README demo
 - add local release packaging
 - bump version to 0.0.2
 - add element hierarchy selector
@@ -217,19 +241,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add visual web review workflow
 - TypeScript-only repo, e2e suite, git hooks and quality gates
 
-[0.6.0]: https://github.com/CanglongCl/dsh-web-review/compare/v0.6.0-beta.0...v0.6.0
-[0.6.0-beta.0]: https://github.com/CanglongCl/dsh-web-review/compare/v0.5.0...v0.6.0-beta.0
-[0.5.0]: https://github.com/CanglongCl/dsh-web-review/compare/v0.5.0-beta.1...v0.5.0
-[0.5.0-beta.1]: https://github.com/CanglongCl/dsh-web-review/compare/v0.4.1-beta.1...v0.5.0-beta.1
-[0.4.1-beta.1]: https://github.com/CanglongCl/dsh-web-review/compare/v0.4.1-beta.0...v0.4.1-beta.1
-[0.4.1-beta.0]: https://github.com/CanglongCl/dsh-web-review/compare/v0.4.0-beta.0...v0.4.1-beta.0
-[0.4.0-beta.0]: https://github.com/CanglongCl/dsh-web-review/compare/v0.3.0...v0.4.0-beta.0
-[0.3.0]: https://github.com/CanglongCl/dsh-web-review/compare/v0.3.0-rc.2...v0.3.0
-[0.3.0-rc.2]: https://github.com/CanglongCl/dsh-web-review/compare/v0.3.0-rc.1...v0.3.0-rc.2
-[0.3.0-rc.1]: https://github.com/CanglongCl/dsh-web-review/compare/v0.2.0...v0.3.0-rc.1
-[0.2.0]: https://github.com/CanglongCl/dsh-web-review/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/CanglongCl/dsh-web-review/compare/v0.0.4-rc.2...v0.1.0
-[0.0.4-rc.2]: https://github.com/CanglongCl/dsh-web-review/compare/v0.0.4-rc.1...v0.0.4-rc.2
-[0.0.4-rc.1]: https://github.com/CanglongCl/dsh-web-review/compare/v0.0.3...v0.0.4-rc.1
-[0.0.3]: https://github.com/CanglongCl/dsh-web-review/compare/v0.0.2...v0.0.3
-[0.0.2]: https://github.com/CanglongCl/dsh-web-review/commits/v0.0.2
+[1.0.0]: https://github.com/GcsSloop/dsh-web-review/compare/v0.6.0...v1.0.0
+[0.6.0]: https://github.com/GcsSloop/dsh-web-review/compare/v0.6.0-beta.0...v0.6.0
+[0.6.0-beta.0]: https://github.com/GcsSloop/dsh-web-review/compare/v0.5.0...v0.6.0-beta.0
+[0.5.0]: https://github.com/GcsSloop/dsh-web-review/compare/v0.5.0-beta.1...v0.5.0
+[0.5.0-beta.1]: https://github.com/GcsSloop/dsh-web-review/compare/v0.4.1-beta.1...v0.5.0-beta.1
+[0.4.1-beta.1]: https://github.com/GcsSloop/dsh-web-review/compare/v0.4.1-beta.0...v0.4.1-beta.1
+[0.4.1-beta.0]: https://github.com/GcsSloop/dsh-web-review/compare/v0.4.0-beta.0...v0.4.1-beta.0
+[0.4.0-beta.0]: https://github.com/GcsSloop/dsh-web-review/compare/v0.3.0...v0.4.0-beta.0
+[0.3.0]: https://github.com/GcsSloop/dsh-web-review/compare/v0.3.0-rc.2...v0.3.0
+[0.3.0-rc.2]: https://github.com/GcsSloop/dsh-web-review/compare/v0.3.0-rc.1...v0.3.0-rc.2
+[0.3.0-rc.1]: https://github.com/GcsSloop/dsh-web-review/compare/v0.2.0...v0.3.0-rc.1
+[0.2.0]: https://github.com/GcsSloop/dsh-web-review/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/GcsSloop/dsh-web-review/commits/v0.1.0
