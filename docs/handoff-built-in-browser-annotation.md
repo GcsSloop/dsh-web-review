@@ -134,6 +134,28 @@ Chromium 在受限沙箱里起不来——这也是 `pnpm check` 里 4 个 CDP �
 
 ## 待完成（按此顺序）
 
+### 0. 当前排查状态（2026-10-20 23:58）
+
+第一次重启后用户反馈「看不到批注」。已确认：
+
+- node 半边是新的：`GET /webview-bridge-source` 返回 200（新端口 54803）；
+- 客户端 bundle 也在正常分发：按 host 的 rev 算法（`sha1("plugin-artifact" + 每条 stat 的
+  `<len>:<part>`，取前 12 位，parts = mtimeMs/ctimeMs/size`) 拼出
+  `/plugins/??dsh-web-review/client.js&rev=<rev>`，返回 200 且字节数正确；
+- 但桌面壳没有可用的控制台（packaged 的 devtools 打不开），所以无法从界面读报错。
+
+因此把「看不见」变成「看得见」：dock 现在**永远渲染一行**——有页面时是 `批注页面`，
+没有页面时给出原因（`no-guest` / `not-visible` / `not-http`），并加了 `DockBoundary`
+把渲染异常直接写进这一行。这样下一次重启的反馈只有三种可能，每种都指向明确方向：
+
+| 现象 | 结论 |
+|---|---|
+| 出现提示文案（任一） | 客户端半边已加载 → 问题在 guest 检测（看 `data-idle-reason`） |
+| 出现「批注面板渲染失败：…」 | 组件渲染抛错，异常文本就是答案 |
+| 什么都没有 | 客户端半边没加载/apply 没跑 → 查 `dsh.client` 装载与 fiber 激活 |
+
+同时可让用户顺手验证 `/skills`（同一客户端入口注册的命令）：能弹出 = 模块已加载。
+
 ### 1. 真机验收（剩下唯一没做的验证）
 
 机制已冒烟，但**插件在真实客户端里的装载与 UI 还没有跑过一次**。
