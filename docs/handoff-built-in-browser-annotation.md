@@ -144,21 +144,37 @@ Chromium 在受限沙箱里起不来——这也是 `pnpm check` 里 4 个 CDP �
 - 点选元素 → 出现 sheet 编辑器 → 写批注 → 发送 → agent 收到 Browser comments 上下文；
 - 刷新页面 / 站内跳转后确认标记与 channel 重建正常。
 
-装本机版本有两条路：
+**当前状态：已做 A（软链），等你重启验证。**
 
 ```sh
-# A) 开发软链（最快，与 web profile 的开发通道一致）
+# 已完成（2026-10-20 23:51）：
 cd ~/.dsh/profiles/desktop/node_modules
-mv dsh-web-review dsh-web-review.bak        # 别删，回滚用
+# 原 1.0.3 目录 → dsh-web-review.bak-20261020-235156
 ln -s /Users/gcssloop/WorkSpace/AIGC/DSH/dsh-web-review/packages/dsh-web-review dsh-web-review
-
-# B) 打包安装（更接近线上）
-cd /Users/gcssloop/WorkSpace/AIGC/DSH/dsh-web-review && pnpm package:official
-# 然后用内置 pnpm 把 dist/dsh-web-review-<版本>.tgz 装进 profile
 ```
 
-注意：`desktop` profile 由 Electron 管理，手改 manifest/`node_modules` 可能被客户端覆盖；
-官方客户端自带插件管理器，长期用那个入口最稳。
+软链已指向本 checkout（含刚构建的 `lib/index.js` / `lib/client.js` / `lib/bridge.js`，
+banner id 均为 `dsh-web-review`，与 profile 的 bundle row 同名）。
+
+**客户端启动后会验证什么（按顺序）：**
+
+1. 打开右侧「浏览器」Tab，加载任意 http(s) 页面（`pnpm demo` 的 5173 或外网站点都行）；
+2. composer 上方应出现 `批注页面` 按钮（没有页面时不显示 = 说明没找到 guest，需排查）；
+3. 点击后 URL 出现在同一行，页面进入拾取模式（悬停有蓝框）；
+4. 点一个元素 → composer 上方弹出 sheet 编辑器（评论输入 + 选择/调整）；
+5. 写评论确认 → 变成编号标记 + 胶囊；点 `发送` → agent 应收到 Browser comments；
+6. 刷新页面 → 重新注入（新 channel），标记按 cssPath 复原。
+
+**回滚：**
+
+```sh
+cd ~/.dsh/profiles/desktop/node_modules
+rm dsh-web-review
+mv dsh-web-review.bak-20261020-235156 dsh-web-review
+```
+
+注意：`desktop` profile 由 Electron 管理，客户端更新或插件管理器操作会覆盖这条软链；
+长期用插件管理器装正式版本更稳（发布后 `dsh-web-review@1.1.x`）。
 
 ### 2. 死代码清理
 
