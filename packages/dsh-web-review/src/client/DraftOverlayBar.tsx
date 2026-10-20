@@ -32,7 +32,13 @@ export interface WebviewDockInjected {
    * empty; the stock input machine rejects an empty submit, so the dock needs
    * this explicit path.
    */
-  sendAnnotationsWithoutDraft: (prompt: string) => Promise<void>
+  /**
+   * Send the annotations as the user's own message.
+   *
+   * `shots` are the element captures: the host stages them as composer draft
+   * images so the sent message carries the pictures, exactly like a paste.
+   */
+  sendAnnotationsWithoutDraft: (prompt: string, shots: readonly string[]) => Promise<void>
   /**
    * Wait until the durable session log recorded the snapshot.
    *

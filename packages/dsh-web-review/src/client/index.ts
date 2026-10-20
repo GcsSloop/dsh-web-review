@@ -167,6 +167,51 @@ export function makeSyncAnnotations(sessionId: SessionId): WebviewDockInjected['
   }
 }
 
+/**
+ * Send one annotation message with its element captures attached.
+ *
+ * Images may only enter a user message through the composer's own draft-image
+ * pipeline, so the captures are registered as draft images (`createDrafts`) and
+ * handed to the public input actions, then submitted exactly like the composer
+ * does. Returns false when this host does not expose that surface, so the caller
+ * falls back to a text-only send (the captures still ride the plugin context).
+ */
+async function sendWithScreenshots(
+  ctx: ClientContext,
+  sessionId: SessionId,
+  text: string,
+  shots: readonly string[],
+): Promise<boolean> {
+  try {
+    const scope = (ctx.sessions as unknown as { scope?: (id: SessionId) => { get(name: string): unknown } | undefined })
+      .scope?.(sessionId)
+    const conversation = scope?.get('conversation') as {
+      createDrafts?: (id: SessionId, files: readonly File[]) => readonly { id: string }[]
+    } | undefined
+    if (conversation === undefined || typeof conversation.createDrafts !== 'function') return false
+    const sessionInput = (scope?.get('conversation') as { input?: { for(scope: unknown): Record<string, unknown> } } | undefined)
+      ?.input?.for(scope)
+    const actions = sessionInput?.actions as
+      | { setDraft(text: string): void; addAttachments(ids: readonly string[]): boolean; submit(): void }
+      | undefined
+    if (actions === undefined) return false
+    const files = shots.map((shot, index) => {
+      const binary = atob(shot)
+      const bytes = new Uint8Array(binary.length)
+      for (let index2 = 0; index2 < binary.length; index2 += 1) bytes[index2] = binary.charCodeAt(index2)
+      return new File([bytes], `annotation-${String(index + 1)}.png`, { type: 'image/png' })
+    })
+    const drafts = conversation.createDrafts(sessionId, files)
+    if (drafts.length === 0) return false
+    actions.setDraft(text)
+    actions.addAttachments(drafts.map(draft => draft.id))
+    actions.submit()
+    return true
+  } catch {
+    return false
+  }
+}
+
 export { createPreviewSession, releasePreviewSessions } from './preview-session.ts'
 
 /** The plugin body: dictionaries and the two shared-store registrations. */
@@ -248,9 +293,11 @@ export function apply(ctx: ClientContext): void {
       // stock behavior.
       // The dock composes the visible request from the annotations themselves; the
       // fixed sentence is only the fallback when it has nothing to say.
-      sendAnnotationsWithoutDraft: (prompt) => scopedConversation(ctx, sessionId).send(
-        prompt.trim() === '' ? t('panel.pick.defaultPrompt') : prompt,
-      ),
+      sendAnnotationsWithoutDraft: async (prompt, shots) => {
+        const text = prompt.trim() === '' ? t('panel.pick.defaultPrompt') : prompt
+        if (shots.length > 0 && await sendWithScreenshots(ctx, sessionId, text, shots)) return
+        await scopedConversation(ctx, sessionId).send(text)
+      },
       // Poll the node's admitted-snapshot record: only a message the durable
       // session log actually kept may clear the annotations.
       awaitAnnotationAdmission: async (snapshotId) => {

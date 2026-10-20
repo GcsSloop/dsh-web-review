@@ -505,6 +505,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
     try {
       await sendAnnotationsWithoutDraft(
         composeAnnotationRequest(stateRef.current.url, stateRef.current.title, stateRef.current.picks, t),
+        [...screenshots.current.values()],
       )
       if (stateRef.current.pickMode) actionsRef.current.togglePickMode()
     } catch {
