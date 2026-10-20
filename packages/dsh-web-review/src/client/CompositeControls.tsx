@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { IconLinkOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconLink } from './icons.tsx'
 import {
   ColorControl,
   ScrubNumber,
@@ -72,7 +72,7 @@ function LinkToggle({ linked, linkLabel, unlinkLabel, onChange }: {
   onChange: (linked: boolean) => void
 }) {
   const icon = linked
-    ? <IconLinkOutline14 />
+    ? <IconLink />
     : (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
         <path d="M5.25 4.1 6.4 2.95a2.4 2.4 0 0 1 3.4 3.4L8.65 7.5M8.75 9.9 7.6 11.05a2.4 2.4 0 0 1-3.4-3.4L5.35 6.5M2 2l10 10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { IconChevronDownOutline14, IconChevronRightOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDown, IconChevronRight } from './icons.tsx'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
   PreviewElementHandle,
@@ -83,7 +83,7 @@ function TreeNode({
               data-state={isExpanded ? 'expanded' : 'collapsed'}
               onClick={() => { onToggle(node.key) }}
             >
-              {isExpanded ? <IconChevronDownOutline14 size={12} /> : <IconChevronRightOutline14 size={12} />}
+              {isExpanded ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
             </button>
           )
           : <span className={css.disclosureSpacer} />}

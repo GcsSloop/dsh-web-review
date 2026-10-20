@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDown } from './icons.tsx'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { UI_SKILLS, type UiSkillName } from '../ui-skills.ts'
 import type { WebviewKey } from './locales.ts'
@@ -96,7 +96,7 @@ export function UiSkillSelector({ selected, t, onToggle }: {
         }}
       >
         <span className={css.title}>{t('editor.skills.title')}</span>
-        <IconChevronDownOutline14 className={sectionOpen ? css.chevronOpen : css.chevron} />
+        <IconChevronDown className={sectionOpen ? css.chevronOpen : css.chevron} />
       </button>
       {sectionOpen && (
         <div id={bodyId} className={css.sectionBody}>
@@ -114,7 +114,7 @@ export function UiSkillSelector({ selected, t, onToggle }: {
               {selected.length === 0 ? t('editor.skills.field') : selected.join(', ')}
             </span>
             <span className={css.count}>{t('editor.skills.count', { count: String(selected.length) })}</span>
-            <IconChevronDownOutline14 className={menuOpen ? css.fieldChevronOpen : css.fieldChevron} />
+            <IconChevronDown className={menuOpen ? css.fieldChevronOpen : css.fieldChevron} />
           </button>
           <p className={css.command}>{t('editor.skills.command')}</p>
         </div>

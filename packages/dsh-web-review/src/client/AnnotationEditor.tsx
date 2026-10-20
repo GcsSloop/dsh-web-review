@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheck } from './icons.tsx'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
   AnnotationStyleChange,
@@ -781,7 +781,7 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
           </button>
           {mode === 'collapsed' && (
             <button type="button" className={css.quickConfirm} aria-label={t('editor.confirm')} disabled={!canConfirm} onClick={() => { confirm() }}>
-              <IconCheckOutline16 size={16} />
+              <IconCheck size={16} />
             </button>
           )}
         </div>
@@ -962,7 +962,7 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
           <div className={css.footer} data-webview-editor-footer="">
             <button type="button" className={css.cancel} onClick={cancel}>{t('editor.cancel')}</button>
             <button type="button" className={css.confirm} aria-label={t('editor.confirm')} disabled={!canConfirm} onClick={() => { confirm() }}>
-              <IconCheckOutline16 size={16} />
+              <IconCheck size={16} />
             </button>
           </div>
         </>

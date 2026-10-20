@@ -5,11 +5,11 @@
  */
 import { useEffect, useId, useRef, useState } from 'react'
 import {
-  IconCloseOutline16,
-  IconLoadingOutline16,
-  IconQueueOutline14,
-  IconWarningOutline16,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+  IconClose,
+  IconLoading,
+  IconQueue,
+  IconWarning,
+} from './icons.tsx'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   annotationSnapshotIdOfSource,
@@ -247,7 +247,7 @@ export function DraftOverlayBar({
                     data-webview-annotation-remove=""
                     onClick={() => { actions.removePick(pick.id) }}
                   >
-                    <IconCloseOutline16 size={14} />
+                    <IconClose size={14} />
                   </button>
                 </li>
               ))}
@@ -273,12 +273,12 @@ export function DraftOverlayBar({
               if (!clearing) setOpen(true)
             }}
           >
-            <span className={css.lead} aria-hidden><IconQueueOutline14 /></span>
+            <span className={css.lead} aria-hidden><IconQueue /></span>
             <span className={css.count}>{countLabel}</span>
             {syncStatus !== 'synced' && (
               <span className={css.status} title={statusLabel} aria-hidden>
-                {syncStatus === 'syncing' && <IconLoadingOutline16 size={14} className={css.spinner} />}
-                {syncStatus === 'error' && <IconWarningOutline16 size={14} />}
+                {syncStatus === 'syncing' && <IconLoading size={14} className={css.spinner} />}
+                {syncStatus === 'error' && <IconWarning size={14} />}
                 {syncStatus === 'error' && <span>{t('dock.sync.failed')}</span>}
               </span>
             )}
@@ -291,7 +291,7 @@ export function DraftOverlayBar({
               title={t('dock.clear')}
               onClick={() => { actions.clearPicks() }}
             >
-              <IconCloseOutline16 size={16} />
+              <IconClose size={16} />
             </button>
           )}
         </div>

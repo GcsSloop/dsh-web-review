@@ -13,12 +13,12 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconCloseOutline16,
-  IconNewChatOutline16,
-  IconSendOutline16,
-  IconTrashOutline16,
-  IconWarningOutline16,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+  IconAnnotate,
+  IconClose,
+  IconSend,
+  IconTrash,
+  IconWarning,
+} from './icons.tsx'
 import { MAX_ANNOTATIONS } from '../annotation-contract.ts'
 import type {
   PreviewElementHandle,
@@ -98,7 +98,7 @@ class DockBoundary extends Component<{ children: ReactNode; t: WebviewDockProps[
     return (
       <div className={css.dock} data-webview-ui data-webview-browser-dock="" data-webview-dock-error="">
         <div className={css.error} role="alert">
-          <IconWarningOutline16 size={14} className={css.errorIcon} />
+          <IconWarning size={14} className={css.errorIcon} />
           <span>{this.props.t('dock.dockError')}: {message}</span>
         </div>
       </div>
@@ -473,7 +473,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
     >
       {visibleError !== null && (
         <div className={css.error} role="alert" title={visibleError} data-webview-error="">
-          <IconWarningOutline16 size={14} className={css.errorIcon} />
+          <IconWarning size={14} className={css.errorIcon} />
           <span>{visibleError}</span>
         </div>
       )}
@@ -492,7 +492,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
               actions.togglePickMode()
             }}
           >
-            {state.pickMode ? <IconCloseOutline16 size={14} /> : <IconNewChatOutline16 size={14} />}
+            {state.pickMode ? <IconClose size={14} /> : <IconAnnotate size={14} />}
             <span>{annotateLabel}</span>
           </button>
         )}
@@ -525,7 +525,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
             disabled={state.picks.length === 0 || sending}
             onClick={() => { actions.clearPicks() }}
           >
-            <IconTrashOutline16 size={14} />
+            <IconTrash size={14} />
           </button>
         )}
         <DraftOverlayBar {...props} inline />
@@ -539,7 +539,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
             data-webview-annotation-send=""
             onClick={() => { void submitAnnotations() }}
           >
-            <IconSendOutline16 size={14} />
+            <IconSend size={14} />
             <span>{sending ? t('panel.pick.sending') : t('panel.pick.send')}</span>
             <span className={css.count} aria-hidden>{state.picks.length}</span>
           </button>

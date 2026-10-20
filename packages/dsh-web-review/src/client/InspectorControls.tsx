@@ -1,12 +1,7 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import {
-  IconChevronDownOutline14,
-  IconLinkOutline14,
-  IconRefreshOutline14,
-  Menu,
-  type MenuEntry,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDown, IconLink, IconRefresh } from './icons.tsx'
 import clsx from 'clsx'
 import { cssColor, formatNumeric, hexOf, parseColor, parseNumeric } from './inspector-values.ts'
 import css from './InspectorControls.module.css'
@@ -27,7 +22,7 @@ export function InspectorSection({ label, children, defaultOpen = true, onOpenCh
         })
       }}>
         <span>{label}</span>
-        <IconChevronDownOutline14 className={clsx(css.sectionChevron, open && css.sectionChevronOpen)} />
+        <IconChevronDown className={clsx(css.sectionChevron, open && css.sectionChevronOpen)} />
       </button>
       {open && <div className={css.sectionBody}>{children}</div>}
     </section>
@@ -55,7 +50,7 @@ export function InspectorRow({ label, children, changed = false, onReset, resetL
         {children}
         {changed && onReset !== undefined && (
           <button type="button" className={css.reset} aria-label={resetLabel} title={resetLabel} onClick={onReset}>
-            <IconRefreshOutline14 />
+            <IconRefresh />
           </button>
         )}
         {(!changed || onReset === undefined) && <span className={css.resetPlaceholder} aria-hidden />}
@@ -87,7 +82,7 @@ export function OptionMenu({ label, value, options, onChange }: {
       anchor={(
         <button ref={triggerRef} type="button" className={css.menuTrigger} aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen(next => !next) }}>
           <span className={css.menuValue}>{value}</span>
-          <IconChevronDownOutline14 className={css.menuChevron} />
+          <IconChevronDown className={css.menuChevron} />
         </button>
       )}
     />
@@ -341,7 +336,7 @@ export function ScrubNumber({ label, value, onChange, onScrubChange, step = 1, m
                 aria-expanded={presetOpen}
                 onClick={() => { setPresetOpen(open => !open) }}
               >
-                <IconChevronDownOutline14 className={clsx(css.numberPresetChevron, presetOpen && css.numberPresetChevronOpen)} />
+                <IconChevronDown className={clsx(css.numberPresetChevron, presetOpen && css.numberPresetChevronOpen)} />
               </button>
             )}
           />
@@ -498,7 +493,7 @@ export function BoxModelControl({ label, sideLabels, values, links, min, options
         {field(first)}
         {!links.all && (
           <ToggleButton label={buttonLabel} pressed={linked} onToggle={() => { onLinkChange(key, !linked) }}>
-            <IconLinkOutline14 />
+            <IconLink />
           </ToggleButton>
         )}
         {links.all && <span aria-hidden />}
@@ -514,14 +509,14 @@ export function BoxModelControl({ label, sideLabels, values, links, min, options
       {canMerge && (
         <span className={css.boxAllLink}>
           <ToggleButton label={linkAllLabel} pressed={false} onToggle={() => { onLinkChange('all', true) }}>
-            <IconLinkOutline14 />
+            <IconLink />
           </ToggleButton>
         </span>
       )}
       {links.all && (
         <span className={css.boxAllLink}>
           <ToggleButton label={unlinkAllLabel} pressed onToggle={() => { onLinkChange('all', false) }}>
-            <IconLinkOutline14 />
+            <IconLink />
           </ToggleButton>
         </span>
       )}
