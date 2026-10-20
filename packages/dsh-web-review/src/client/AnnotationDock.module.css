@@ -16,6 +16,7 @@
   position: relative;
   z-index: 4;
   flex: none;
+  container-type: inline-size;
   width: calc(
     100% -
     var(--dsh-composer-side-clearance) -
@@ -35,6 +36,28 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  /* Never let the diagnostics/URL text push the Send action out of the column. */
+  overflow: hidden;
+}
+
+/*
+ * Only the text members shrink; every control keeps its hit area. The scan
+ * readout is the first thing to give way, then the address.
+ */
+.scan,
+.hint,
+.url {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container (max-width: 620px) {
+  .scan {
+    display: none;
+  }
 }
 
 .entry,
@@ -84,9 +107,6 @@
 }
 
 .hint {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
   color: var(--dsw-alias-label-caption, #a0a4ab);
   font-size: 12px;
   line-height: 16px;
@@ -95,16 +115,12 @@
 }
 
 .scan {
-  flex: none;
   color: var(--dsw-alias-label-quaternary, #b8bcc2);
   font: 11px/16px var(--ds-font-family-code, ui-monospace, monospace);
   white-space: nowrap;
 }
 
 .url {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
   color: var(--dsw-alias-label-caption, #a0a4ab);
   font: 11px/16px var(--ds-font-family-code, ui-monospace, monospace);
   text-overflow: ellipsis;
@@ -114,6 +130,7 @@
 .send {
   display: inline-flex;
   flex: none;
+  margin-left: auto;
   align-items: center;
   gap: 6px;
   height: 28px;

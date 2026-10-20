@@ -119,6 +119,8 @@ describe('AnnotationDock', () => {
     })
     expect(hint.textContent).toBe(zh['dock.page.hint'])
     expect(hint.getAttribute('data-idle-reason')).toBe('no-guest')
+    // The scan readout shares the row with Send; it must never grow past it.
+    expect(document.querySelector('[data-webview-annotation-scan]')).not.toBeNull()
     expect(document.querySelector('[data-webview-browser-dock]')?.getAttribute('data-webview-dock-state')).toBe('idle')
   })
 

@@ -88,6 +88,7 @@ export function installSelfCheck(): () => void {
   badge.id = BADGE_ID
   badge.dataset.webviewSelfcheck = ''
   badge.setAttribute('aria-hidden', 'true')
+  badge.hidden = true
   badge.style.cssText = [
     'position:fixed',
     'left:8px',
@@ -106,6 +107,8 @@ export function installSelfCheck(): () => void {
   const host = document.body ?? document.documentElement
   if (host === null) return () => undefined
   host.append(badge)
+  // The badge stays in the DOM (hidden) so the tick keeps its anchor; only the
+  // visible debug text is gone now that the attachment works.
   let ticks = 0
   let seen = false
   const tick = (): void => {
