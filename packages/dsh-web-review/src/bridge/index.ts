@@ -459,13 +459,49 @@ function ensureSelectionBox(): HTMLDivElement {
   return selectionBox
 }
 
+/**
+ * Outline rectangle of one selected element.
+ *
+ * The element's own bounding box is empty for container-shaped selections (a
+ * link shell whose children carry the size, `display: contents`, an absolutely
+ * positioned child), and an empty box reads as "nothing is selected" even though
+ * the host editor is open. Union every client rect first so wrapped inline
+ * elements outline fully, then fall back to the first painted descendant.
+ */
+function selectionRect(element: Element): { left: number; top: number; right: number; bottom: number } | null {
+  let left = Number.POSITIVE_INFINITY
+  let top = Number.POSITIVE_INFINITY
+  let right = Number.NEGATIVE_INFINITY
+  let bottom = Number.NEGATIVE_INFINITY
+  const include = (rect: { left: number; top: number; width: number; height: number }): void => {
+    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) return
+    if (rect.width === 0 && rect.height === 0) return
+    left = Math.min(left, rect.left)
+    top = Math.min(top, rect.top)
+    right = Math.max(right, rect.left + rect.width)
+    bottom = Math.max(bottom, rect.top + rect.height)
+  }
+  for (const rect of element.getClientRects()) include(rect)
+  const own = element.getBoundingClientRect()
+  include(own)
+  if (right <= left || bottom <= top) {
+    for (const descendant of element.querySelectorAll('*')) {
+      const rect = descendant.getBoundingClientRect()
+      if (rect.width === 0 && rect.height === 0) continue
+      include(rect)
+      break
+    }
+  }
+  return right > left && bottom > top ? { left, top, right, bottom } : null
+}
+
 function positionSelection(animate: boolean): void {
   if (selected === null || !selected.isConnected) {
     selectionBox?.removeAttribute('data-visible')
     return
   }
-  const rect = selected.getBoundingClientRect()
-  if (rect.width === 0 && rect.height === 0) {
+  const rect = selectionRect(selected)
+  if (rect === null) {
     selectionBox?.removeAttribute('data-visible')
     return
   }
@@ -478,8 +514,8 @@ function positionSelection(animate: boolean): void {
   }
   box.style.left = `${String(rect.left - 2)}px`
   box.style.top = `${String(rect.top - 2)}px`
-  box.style.width = `${String(rect.width + 4)}px`
-  box.style.height = `${String(rect.height + 4)}px`
+  box.style.width = `${String(rect.right - rect.left + 4)}px`
+  box.style.height = `${String(rect.bottom - rect.top + 4)}px`
   box.setAttribute('data-visible', '')
   if (!animate) requestAnimationFrame(() => { box.removeAttribute('data-static') })
 }

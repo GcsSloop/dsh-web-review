@@ -260,6 +260,15 @@ function AnnotationDockBody(props: WebviewDockProps) {
   }
 
   onPickRef.current = (target) => {
+    reportDiagnostics({
+      kind: 'pick',
+      tagName: target.snapshot.tagName,
+      cssPath: target.snapshot.cssPath,
+      label: target.snapshot.label,
+      rect: target.rect,
+      viewport: target.viewport,
+      detail: target.detail,
+    })
     if (stateRef.current.picks.length >= MAX_ANNOTATIONS) {
       actionsRef.current.setError(tRef.current('panel.pick.limit', { count: String(MAX_ANNOTATIONS) }))
       sessionRef.current?.cancelEdit()

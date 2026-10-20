@@ -780,7 +780,14 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
             <EyeIcon />
           </button>
           {mode === 'collapsed' && (
-            <button type="button" className={css.quickConfirm} aria-label={t('editor.confirm')} disabled={!canConfirm} onClick={() => { confirm() }}>
+            <button
+              type="button"
+              className={css.quickConfirm}
+              aria-label={t('editor.confirm')}
+              title={canConfirm ? t('editor.confirm') : t('editor.confirm.empty')}
+              disabled={!canConfirm}
+              onClick={() => { confirm() }}
+            >
               <IconCheck size={16} />
             </button>
           )}
@@ -961,7 +968,14 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
           </div>
           <div className={css.footer} data-webview-editor-footer="">
             <button type="button" className={css.cancel} onClick={cancel}>{t('editor.cancel')}</button>
-            <button type="button" className={css.confirm} aria-label={t('editor.confirm')} disabled={!canConfirm} onClick={() => { confirm() }}>
+            <button
+              type="button"
+              className={css.confirm}
+              aria-label={t('editor.confirm')}
+              title={canConfirm ? t('editor.confirm') : t('editor.confirm.empty')}
+              disabled={!canConfirm}
+              onClick={() => { confirm() }}
+            >
               <IconCheck size={16} />
             </button>
           </div>
