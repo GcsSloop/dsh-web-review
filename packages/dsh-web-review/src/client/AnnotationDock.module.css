@@ -83,6 +83,17 @@
   cursor: default;
 }
 
+.hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-caption, #a0a4ab);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .url {
   flex: 1 1 auto;
   min-width: 0;

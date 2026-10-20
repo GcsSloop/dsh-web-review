@@ -35,11 +35,12 @@ import { isPreviewableUrl } from '../proxy-url.ts'
 import type { PickItem } from './contract.ts'
 import { PreviewBridgeClient, type PreviewReadyState } from './preview-bridge.ts'
 import {
+  browserGuests,
+  guestOnScreen,
   guestPageTitle,
   guestPageUrl,
   injectWebviewBridge,
   probeWebviewPage,
-  visibleBrowserGuest,
   webviewCarrier,
   type WebviewBridgeConfig,
   type WebviewCarrier,
@@ -56,6 +57,15 @@ export interface BrowserPage {
   title: string
 }
 
+/** Why there is no page to annotate, when there is none. */
+export type BrowserIdleReason =
+  /** No built-in Browser guest exists in the document. */
+  | 'no-guest'
+  /** A guest exists but its tab/pane is not on screen. */
+  | 'not-visible'
+  /** The visible guest is not on a credential-free HTTP(S) page yet. */
+  | 'not-http'
+
 /** Why attaching failed, localized by the dock. */
 export type BrowserAnnotationFailure = 'no-page' | 'bridge-unavailable'
 
@@ -63,6 +73,8 @@ export type BrowserAnnotationFailure = 'no-page' | 'bridge-unavailable'
 export interface BrowserAnnotationEvents {
   /** The visible Browser page changed; null when there is none to annotate. */
   onPage: (page: BrowserPage | null) => void
+  /** Why there is no page, for the dock's hint (only meaningful while onPage is null). */
+  onIdle: (reason: BrowserIdleReason) => void
   onReady: (ready: PreviewReadyState) => void
   onPick: (target: PreviewElementTarget) => void
   onCancelPick: () => void
@@ -126,6 +138,11 @@ export class BrowserAnnotationSession {
   /** Whether a picker is currently attached to a guest document. */
   get attached(): boolean {
     return this.bridge !== null
+  }
+
+  /** Re-scan the document now instead of waiting for the next interval. */
+  refresh(): void {
+    this.scan()
   }
 
   /** Start watching for a Browser page; the dock calls this once on mount. */
@@ -245,7 +262,8 @@ export class BrowserAnnotationSession {
 
   private scan(): void {
     if (this.disposed) return
-    const guest = visibleBrowserGuest()
+    const guests = browserGuests()
+    const guest = guests.find(candidate => guestOnScreen(candidate))
     if (this.guest !== null && guest !== this.guest) {
       // The attached guest left the document (Browser tab closed or replaced).
       this.detach()
@@ -254,6 +272,11 @@ export class BrowserAnnotationSession {
     const next = guest === undefined || url === undefined
       ? null
       : { url, title: guestPageTitle(guest) }
+    if (next === null && guest === undefined) {
+      this.events.onIdle(guests.length === 0 ? 'no-guest' : 'not-visible')
+    } else if (next === null) {
+      this.events.onIdle('not-http')
+    }
     if (next?.url === this.page?.url && next?.title === this.page?.title) return
     this.page = next
     this.events.onPage(next)
@@ -276,7 +299,7 @@ export class BrowserAnnotationSession {
       // Already attached: reuse it, and repair the arm state on the way out.
       return
     }
-    const guest = visibleBrowserGuest()
+    const guest = browserGuests().find(candidate => guestOnScreen(candidate))
     if (guest === undefined) throw new Error('no-page')
     const probe = await probeWebviewPage(guest)
     const href = probe === undefined || !isPreviewableUrl(probe.href) ? guestPageUrl(guest) : probe.href

@@ -10,7 +10,7 @@
  * controller in `browser-annotation.ts` owns that bridge and this component only
  * mirrors its events into store state and one editor transaction.
  */
-import { useEffect, useRef, useState } from 'react'
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCloseOutline16,
@@ -29,6 +29,7 @@ import type {
 import { AnnotationEditor, type AnnotationEditorMode, type AnnotationEditorValue, type ElementNavigationFeedback } from './AnnotationEditor.tsx'
 import {
   BrowserAnnotationSession,
+  type BrowserIdleReason,
   type BrowserPage,
 } from './browser-annotation.ts'
 import type { PickItem } from './contract.ts'
@@ -73,13 +74,56 @@ function maxSheetHeight(): number {
     : Math.max(MIN_SHEET_HEIGHT, Math.round(window.innerHeight * MAX_SHEET_RATIO))
 }
 
-/** The annotation dock: Browser entry, capsule, Send, and the editor sheet. */
-export function AnnotationDock(props: WebviewDockProps) {
+/**
+ * Keep a broken dock visible.
+ *
+ * A throw inside the dock would otherwise unmount the whole cell without a trace
+ * (this plugin has no console the user can inspect in the desktop shell), so the
+ * row reports the failure in place and the composer keeps working.
+ */
+class DockBoundary extends Component<{ children: ReactNode; t: WebviewDockProps['t'] }, { message: string | null }> {
+  override state = { message: null as string | null }
+
+  static getDerivedStateFromError(error: unknown): { message: string } {
+    return { message: error instanceof Error ? error.message : String(error) }
+  }
+
+  override render(): ReactNode {
+    const { message } = this.state
+    if (message === null) return this.props.children
+    return (
+      <div className={css.dock} data-webview-ui data-webview-browser-dock="" data-webview-dock-error="">
+        <div className={css.error} role="alert">
+          <IconWarningOutline16 size={14} className={css.errorIcon} />
+          <span>{this.props.t('dock.dockError')}: {message}</span>
+        </div>
+      </div>
+    )
+  }
+}
+
+/**
+ * The annotation dock: Browser entry, capsule, Send, and the editor sheet.
+ *
+ * The body sits inside {@link DockBoundary} so a render failure is reported in
+ * the composer row instead of disappearing.
+ */
+export function AnnotationDock(props: WebviewDockProps): JSX.Element {
+  return (
+    <DockBoundary t={props.t}>
+      <AnnotationDockBody {...props} />
+    </DockBoundary>
+  )
+}
+
+/** The dock's own render; see {@link AnnotationDock}. */
+function AnnotationDockBody(props: WebviewDockProps) {
   const { useStore, actions, t, useInput, useSession, inputActions, sendAnnotationsWithoutDraft } = props
   const state = useStore(s => s)
   const input = useInput(s => s)
   const promptError = useSession(session => session.promptError)
   const [page, setPage] = useState<BrowserPage | null>(null)
+  const [idleReason, setIdleReason] = useState<BrowserIdleReason>('no-guest')
   const [failure, setFailure] = useState<string | null>(null)
   const [editor, setEditor] = useState<EditorTransaction | null>(null)
   const [sheet, setSheet] = useState<HTMLDivElement | null>(null)
@@ -231,6 +275,7 @@ export function AnnotationDock(props: WebviewDockProps) {
         setFailure(null)
         if (stateRef.current.url !== next.url) actionsRef.current.setUrl(next.url)
       },
+      onIdle: (reason) => { setIdleReason(reason) },
       onReady: (ready) => {
         setFailure(null)
         actionsRef.current.setError(null)
@@ -386,8 +431,18 @@ export function AnnotationDock(props: WebviewDockProps) {
     : state.picks.length > 0 ? t('dock.annotate.resume') : t('dock.annotate')
   const resolvedSheetHeight = clamp(sheetHeight, MIN_SHEET_HEIGHT, maxSheetHeight())
 
+  const showHint = page === null && !state.pickMode && state.picks.length === 0
+  const hintText = idleReason === 'no-guest'
+    ? t('dock.page.hint')
+    : idleReason === 'not-visible' ? t('dock.page.hidden') : t('dock.page.unsupported')
+
   return (
-    <div className={css.dock} data-webview-ui data-webview-browser-dock="">
+    <div
+      className={css.dock}
+      data-webview-ui
+      data-webview-browser-dock=""
+      data-webview-dock-state={showHint ? 'idle' : 'page'}
+    >
       {visibleError !== null && (
         <div className={css.error} role="alert" title={visibleError} data-webview-error="">
           <IconWarningOutline16 size={14} className={css.errorIcon} />
@@ -412,6 +467,11 @@ export function AnnotationDock(props: WebviewDockProps) {
             {state.pickMode ? <IconCloseOutline16 size={14} /> : <IconNewChatOutline16 size={14} />}
             <span>{annotateLabel}</span>
           </button>
+        )}
+        {showHint && (
+          <span className={css.hint} data-webview-annotation-hint="" data-idle-reason={idleReason} title={hintText}>
+            {hintText}
+          </span>
         )}
         {state.pickMode && page !== null && (
           <span className={css.url} title={page.url} data-webview-annotation-page="">{page.url}</span>

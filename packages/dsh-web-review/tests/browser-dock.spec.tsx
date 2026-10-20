@@ -109,6 +109,27 @@ describe('AnnotationDock', () => {
     expect(document.querySelector('[data-webview-annotate]')).toBeNull()
   })
 
+  it('explains the idle state instead of disappearing', async () => {
+    renderDock()
+    const hint = await waitFor(() => {
+      const element = document.querySelector('[data-webview-annotation-hint]')
+      expect(element).not.toBeNull()
+      return element as HTMLElement
+    })
+    expect(hint.textContent).toBe(zh['dock.page.hint'])
+    expect(hint.getAttribute('data-idle-reason')).toBe('no-guest')
+    expect(document.querySelector('[data-webview-browser-dock]')?.getAttribute('data-webview-dock-state')).toBe('idle')
+  })
+
+  it('replaces the hint with the entry once a Browser page is on screen', async () => {
+    const guest = installFakeGuest({ url: 'http://localhost:5173/', title: 'Demo' })
+    renderDock()
+    const entry = await screen.findByRole('button', { name: zh['dock.annotate'] })
+    expect(entry).toBeTruthy()
+    expect(document.querySelector('[data-webview-annotation-hint]')).toBeNull()
+    expect(guest).toBeTruthy()
+  })
+
   it('arms the picker on the visible guest when the entry is used', async () => {
     const guest = installFakeGuest({ url: 'http://localhost:5173/', title: 'Demo' })
     const { store } = renderDock()

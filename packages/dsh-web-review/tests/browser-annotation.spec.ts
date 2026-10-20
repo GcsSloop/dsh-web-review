@@ -28,6 +28,7 @@ async function until(condition: () => boolean, timeoutMs = 3_000): Promise<void>
 
 interface RecordedEvents extends BrowserAnnotationEvents {
   pages: (BrowserPage | null)[]
+  idle: string[]
   failures: string[]
   handoffs: unknown[]
   ready: number
@@ -36,10 +37,12 @@ interface RecordedEvents extends BrowserAnnotationEvents {
 function recordingEvents(): RecordedEvents {
   const events: RecordedEvents = {
     pages: [],
+    idle: [],
     failures: [],
     handoffs: [],
     ready: 0,
     onPage: (page) => { events.pages.push(page) },
+    onIdle: (reason) => { events.idle.push(reason) },
     onReady: () => { events.ready += 1 },
     onPick: () => undefined,
     onCancelPick: () => undefined,
@@ -178,8 +181,22 @@ describe('BrowserAnnotationSession', () => {
     const events = recordingEvents()
     const session = new BrowserAnnotationSession(events)
     session.start()
+    expect(events.idle).toEqual(['not-http'])
     await session.activate()
     expect(events.failures).toEqual(['no-page'])
+    session.stop()
+  })
+
+  it('tells the dock why there is nothing to annotate', () => {
+    const events = recordingEvents()
+    const session = new BrowserAnnotationSession(events)
+    session.start()
+    expect(events.idle).toEqual(['no-guest'])
+
+    const hidden = installFakeGuest({ url: 'http://localhost:5173/', visible: false })
+    session.refresh()
+    expect(events.idle.at(-1)).toBe('not-visible')
+    hidden.destroy()
     session.stop()
   })
 })
