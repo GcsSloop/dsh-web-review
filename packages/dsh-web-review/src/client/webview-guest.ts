@@ -86,12 +86,40 @@ export function webviewGuestOf(value: unknown): WebviewGuest | undefined {
 
 /** Every built-in Browser guest currently in the document. */
 export function browserGuests(root: ParentNode = document): WebviewGuest[] {
+  return scanBrowserGuests(root).guests
+}
+
+/**
+ * One document survey of the Browser's frames.
+ *
+ * The three counts exist so a dock that cannot find a page can say why: no guest
+ * element at all, a guest with a different marker, or a cross-origin iframe
+ * (which this plugin cannot inject into).
+ */
+export interface BrowserGuestScan {
+  /** Usable guests: a `<webview>` carrying the Browser frame marker. */
+  guests: WebviewGuest[]
+  /** Every `<webview>` element in the document, marked or not. */
+  webviews: number
+  /** Every element carrying `data-sidebar-browser-frame`, whatever its tag. */
+  framed: number
+  /** Cross-origin Browser iframes (the Web platform's shape). */
+  iframes: number
+}
+
+/** Survey the document for Browser frames. */
+export function scanBrowserGuests(root: ParentNode = document): BrowserGuestScan {
   const guests: WebviewGuest[] = []
   for (const element of root.querySelectorAll(BROWSER_GUEST_SELECTOR)) {
     const guest = webviewGuestOf(element)
     if (guest !== undefined) guests.push(guest)
   }
-  return guests
+  return {
+    guests,
+    webviews: root.querySelectorAll('webview').length,
+    framed: root.querySelectorAll('[data-sidebar-browser-frame]').length,
+    iframes: root.querySelectorAll('iframe[data-sidebar-browser-frame]').length,
+  }
 }
 
 /** Whether the guest is on screen, which also tells hidden Browser tabs apart. */

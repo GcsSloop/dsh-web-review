@@ -35,14 +35,15 @@ import { isPreviewableUrl } from '../proxy-url.ts'
 import type { PickItem } from './contract.ts'
 import { PreviewBridgeClient, type PreviewReadyState } from './preview-bridge.ts'
 import {
-  browserGuests,
   guestOnScreen,
   guestPageTitle,
   guestPageUrl,
   injectWebviewBridge,
   probeWebviewPage,
+  scanBrowserGuests,
   webviewCarrier,
   type WebviewBridgeConfig,
+  type BrowserGuestScan,
   type WebviewCarrier,
   type WebviewGuest,
   type WebviewPageState,
@@ -75,6 +76,8 @@ export interface BrowserAnnotationEvents {
   onPage: (page: BrowserPage | null) => void
   /** Why there is no page, for the dock's hint (only meaningful while onPage is null). */
   onIdle: (reason: BrowserIdleReason) => void
+  /** Document survey for the hint's diagnostics. */
+  onScan: (scan: BrowserGuestScan) => void
   onReady: (ready: PreviewReadyState) => void
   onPick: (target: PreviewElementTarget) => void
   onCancelPick: () => void
@@ -262,7 +265,9 @@ export class BrowserAnnotationSession {
 
   private scan(): void {
     if (this.disposed) return
-    const guests = browserGuests()
+    const scan = scanBrowserGuests()
+    this.events.onScan(scan)
+    const guests = scan.guests
     const guest = guests.find(candidate => guestOnScreen(candidate))
     if (this.guest !== null && guest !== this.guest) {
       // The attached guest left the document (Browser tab closed or replaced).
@@ -299,7 +304,7 @@ export class BrowserAnnotationSession {
       // Already attached: reuse it, and repair the arm state on the way out.
       return
     }
-    const guest = browserGuests().find(candidate => guestOnScreen(candidate))
+    const guest = scanBrowserGuests().guests.find(candidate => guestOnScreen(candidate))
     if (guest === undefined) throw new Error('no-page')
     const probe = await probeWebviewPage(guest)
     const href = probe === undefined || !isPreviewableUrl(probe.href) ? guestPageUrl(guest) : probe.href

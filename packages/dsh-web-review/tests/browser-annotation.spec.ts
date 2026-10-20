@@ -29,6 +29,7 @@ async function until(condition: () => boolean, timeoutMs = 3_000): Promise<void>
 interface RecordedEvents extends BrowserAnnotationEvents {
   pages: (BrowserPage | null)[]
   idle: string[]
+  scans: unknown[]
   failures: string[]
   handoffs: unknown[]
   ready: number
@@ -38,11 +39,13 @@ function recordingEvents(): RecordedEvents {
   const events: RecordedEvents = {
     pages: [],
     idle: [],
+    scans: [],
     failures: [],
     handoffs: [],
     ready: 0,
     onPage: (page) => { events.pages.push(page) },
     onIdle: (reason) => { events.idle.push(reason) },
+    onScan: (scan) => { events.scans.push(scan) },
     onReady: () => { events.ready += 1 },
     onPick: () => undefined,
     onCancelPick: () => undefined,

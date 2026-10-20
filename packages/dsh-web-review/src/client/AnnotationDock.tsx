@@ -32,6 +32,7 @@ import {
   type BrowserIdleReason,
   type BrowserPage,
 } from './browser-annotation.ts'
+import type { BrowserGuestScan } from './webview-guest.ts'
 import type { PickItem } from './contract.ts'
 import { DraftOverlayBar, type WebviewDockProps } from './DraftOverlayBar.tsx'
 import type { FloatingEditorSize } from './floating-position.ts'
@@ -124,6 +125,13 @@ function AnnotationDockBody(props: WebviewDockProps) {
   const promptError = useSession(session => session.promptError)
   const [page, setPage] = useState<BrowserPage | null>(null)
   const [idleReason, setIdleReason] = useState<BrowserIdleReason>('no-guest')
+  const [scanInfo, setScanInfo] = useState<{
+    ticks: number
+    guests: number
+    webviews: number
+    framed: number
+    iframes: number
+  }>({ ticks: 0, guests: 0, webviews: 0, framed: 0, iframes: 0 })
   const [failure, setFailure] = useState<string | null>(null)
   const [editor, setEditor] = useState<EditorTransaction | null>(null)
   const [sheet, setSheet] = useState<HTMLDivElement | null>(null)
@@ -276,6 +284,15 @@ function AnnotationDockBody(props: WebviewDockProps) {
         if (stateRef.current.url !== next.url) actionsRef.current.setUrl(next.url)
       },
       onIdle: (reason) => { setIdleReason(reason) },
+      onScan: (scan: BrowserGuestScan) => {
+        setScanInfo(current => ({
+          ticks: current.ticks + 1,
+          guests: scan.guests.length,
+          webviews: scan.webviews,
+          framed: scan.framed,
+          iframes: scan.iframes,
+        }))
+      },
       onReady: (ready) => {
         setFailure(null)
         actionsRef.current.setError(null)
@@ -431,10 +448,16 @@ function AnnotationDockBody(props: WebviewDockProps) {
     : state.picks.length > 0 ? t('dock.annotate.resume') : t('dock.annotate')
   const resolvedSheetHeight = clamp(sheetHeight, MIN_SHEET_HEIGHT, maxSheetHeight())
 
-  const showHint = page === null && !state.pickMode && state.picks.length === 0
+  const showHint = page === null && state.picks.length === 0
   const hintText = idleReason === 'no-guest'
     ? t('dock.page.hint')
     : idleReason === 'not-visible' ? t('dock.page.hidden') : t('dock.page.unsupported')
+  // Diagnostics for a dock that cannot find the Browser's page: the three
+  // element counts separate "no guest element" from "guest marked differently"
+  // from "the Web platform's cross-origin iframe".
+  const scanLabel = `${t('dock.page.scan')} ${String(scanInfo.ticks)} · guest ${String(scanInfo.guests)}`
+    + ` · webview ${String(scanInfo.webviews)} · frame ${String(scanInfo.framed)}`
+    + ` · iframe ${String(scanInfo.iframes)}`
 
   return (
     <div
@@ -469,9 +492,21 @@ function AnnotationDockBody(props: WebviewDockProps) {
           </button>
         )}
         {showHint && (
-          <span className={css.hint} data-webview-annotation-hint="" data-idle-reason={idleReason} title={hintText}>
-            {hintText}
-          </span>
+          <>
+            <span
+              className={css.hint}
+            data-webview-annotation-hint=""
+              data-idle-reason={idleReason}
+              data-scan-ticks={scanInfo.ticks}
+              data-scan-guests={scanInfo.guests}
+              data-scan-webviews={scanInfo.webviews}
+              data-scan-framed={scanInfo.framed}
+              data-scan-iframes={scanInfo.iframes}
+              title={hintText}
+            >
+              {hintText}
+            </span>
+          </>
         )}
         {state.pickMode && page !== null && (
           <span className={css.url} title={page.url} data-webview-annotation-page="">{page.url}</span>
@@ -489,6 +524,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
           </button>
         )}
         <DraftOverlayBar {...props} inline />
+        <span className={css.scan} data-webview-annotation-scan="">{scanLabel}</span>
         {state.picks.length > 0 && (
           <button
             type="button"

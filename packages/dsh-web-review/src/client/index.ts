@@ -38,6 +38,7 @@ import {
 import { en, zh, type WebviewKey } from './locales.ts'
 import { createWebviewStore } from './stores.ts'
 import { AnnotationDock } from './AnnotationDock.tsx'
+import { installSelfCheck } from './self-check.ts'
 import { type WebviewDockInjected } from './DraftOverlayBar.tsx'
 import { normalizePreviewUrl } from './navigation-url.ts'
 import { isUiSkillName, UI_SKILLS, type UiSkillName } from '../ui-skills.ts'
@@ -170,6 +171,9 @@ export { createPreviewSession, releasePreviewSessions } from './preview-session.
 /** The plugin body: dictionaries and the two shared-store registrations. */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-web-review: dictionaries')
+  // TEMPORARY: a self-check badge outside React, until the Browser attachment is
+  // verified on the real client. Remove with self-check.ts.
+  ctx.effect(() => installSelfCheck(), 'dsh-web-review: self-check badge')
 
   // Registration-time text (the guide capsule) reads through the bound
   // translate as a thunk, so it follows the active locale without

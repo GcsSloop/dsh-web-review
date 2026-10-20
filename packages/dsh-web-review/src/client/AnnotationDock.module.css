@@ -94,6 +94,13 @@
   white-space: nowrap;
 }
 
+.scan {
+  flex: none;
+  color: var(--dsw-alias-label-quaternary, #b8bcc2);
+  font: 11px/16px var(--ds-font-family-code, ui-monospace, monospace);
+  white-space: nowrap;
+}
+
 .url {
   flex: 1 1 auto;
   min-width: 0;
