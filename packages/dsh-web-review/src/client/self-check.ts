@@ -45,7 +45,7 @@ export function selfCheckLine(
   const shape = dock.mounted
     ? `${String(Math.round(dock.width))}x${String(Math.round(dock.height))} ${dock.state}`
     : 'no'
-  return `批注自检 ${String(ticks)} · 容器 ${String(scan.guests.length)}/${String(scan.webviews)}`
+  return `批注自检 v2 ${String(ticks)} · 容器 ${String(scan.guests.length)}/${String(scan.webviews)}`
     + `/${String(scan.framed)}/${String(scan.iframes)}`
     + ` · dock ${shape}${dock.seen ? ' · was:yes' : ''}`
 }

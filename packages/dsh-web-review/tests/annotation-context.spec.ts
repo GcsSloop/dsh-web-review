@@ -396,7 +396,7 @@ describe('pending annotation admission', () => {
     expect(decision.messages[0]).toBe(existing)
     expect(decision.messages[1]).toMatchObject({
       source: {
-        kind: 'plugin', plugin: 'dsh-web-review', form: 'snapshot',
+        kind: 'plugin:dsh-web-review', form: 'snapshot',
         snapshotId: expect.any(String),
         sections: [
           expect.objectContaining({ name: 'Overview' }),
@@ -457,7 +457,7 @@ describe('pending annotation admission', () => {
     expect(queued.messages[0]).toBe(userPrompt)
     expect(queued.messages[1]).toMatchObject({
       source: {
-        kind: 'plugin', plugin: 'dsh-web-review', form: 'snapshot',
+        kind: 'plugin:dsh-web-review', form: 'snapshot',
         snapshotId: expect.any(String),
         sections: expect.arrayContaining([expect.objectContaining({ name: 'Overview' })]),
       },
@@ -510,7 +510,7 @@ describe('pending annotation admission', () => {
     })
     expect(decision.messages[1]).toMatchObject({
       source: {
-        kind: 'plugin', plugin: 'dsh-web-review', form: 'snapshot',
+        kind: 'plugin:dsh-web-review', form: 'snapshot',
         snapshotId: expect.any(String), sections: expect.any(Array),
       },
       content: [{ type: 'text', text: expect.stringContaining('# Browser comments') }],

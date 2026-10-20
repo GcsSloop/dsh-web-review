@@ -37,8 +37,15 @@ import {
   type BrowserCommentsPresentation,
 } from './browser-comments-context.ts'
 
-/** Plugin provenance recorded on every injected context message. */
-export const ANNOTATION_SOURCE = { kind: 'plugin', plugin: 'dsh-web-review' } as const
+/**
+ * Plugin provenance recorded on every injected context message.
+ *
+ * Message format v4 admits only producer-owned kinds, and a third-party plugin's
+ * canonical kind is `plugin:<package>`; the released `{ kind: 'plugin', plugin }`
+ * wrapper is refused by the named-check (`format v4 message requires a
+ * producer-owned source kind`) and fails the whole turn.
+ */
+export const ANNOTATION_SOURCE = { kind: 'plugin:dsh-web-review' } as const
 
 export interface PendingAnnotationContext {
   snapshotId: AnnotationSnapshotIdType
@@ -507,7 +514,7 @@ export async function attachPendingAnnotationContext(
     content: [{ type: 'text', text: pending.context }],
   })
   const reminder = reminders.length === 0 ? [] : [createUserMessage({
-    source: ANNOTATION_SOURCE,
+    source: ANNOTATION_SOURCE as unknown as UserMessage['source'],
     content: [{ type: 'text', text: formatLoadedSkillReminder(reminders) }],
   })]
   return {

@@ -40,8 +40,15 @@ export interface BrowserCommentsPresentationComment {
  * contribution, in the exact order the model read them.
  */
 export interface BrowserCommentsContextSource {
-  readonly kind: 'plugin'
-  readonly plugin: 'dsh-web-review'
+  /**
+   * Producer-owned source kind.
+   *
+   * The harness's message format v4 refuses the released `kind: 'plugin'`
+   * wrapper (`format v4 message requires a producer-owned source kind`) and
+   * renames it to `plugin:<package>`; a third-party plugin writes that kind
+   * directly so the already-admitted message is stored unchanged.
+   */
+  readonly kind: 'plugin:dsh-web-review'
   readonly form: 'snapshot'
   readonly snapshotId: AnnotationSnapshotIdType
   readonly sections: readonly ContextSnapshotSection[]
@@ -88,10 +95,11 @@ function boundedString(value: unknown, cap: number, allowEmpty = true): string |
 
 export function browserCommentsContextSourceOf(value: unknown): BrowserCommentsContextSource | undefined {
   const source = exactRecord(value, ['kind', 'plugin', 'form', 'snapshotId', 'sections'])
-  if (
-    source === undefined || source.kind !== 'plugin' || source.plugin !== 'dsh-web-review'
-    || source.form !== 'snapshot'
-  ) return undefined
+    ?? exactRecord(value, ['kind', 'form', 'snapshotId', 'sections'])
+  if (source === undefined || source.form !== 'snapshot') return undefined
+  // Sessions recorded before the v4 producer rename keep the released wrapper.
+  const legacy = source.kind === 'plugin' && source.plugin === 'dsh-web-review'
+  if (!legacy && source.kind !== 'plugin:dsh-web-review') return undefined
   const snapshotId = boundedString(source.snapshotId, ANNOTATION_LIMITS.snapshotId, false)
   if (snapshotId === undefined || !Array.isArray(source.sections) || source.sections.length < 1
     || source.sections.length > MAX_ANNOTATIONS + 1) return undefined
@@ -104,8 +112,7 @@ export function browserCommentsContextSourceOf(value: unknown): BrowserCommentsC
     sections.push({ name, text })
   }
   return {
-    kind: 'plugin',
-    plugin: 'dsh-web-review',
+    kind: 'plugin:dsh-web-review',
     form: 'snapshot',
     snapshotId: AnnotationSnapshotId(snapshotId),
     sections,

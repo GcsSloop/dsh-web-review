@@ -74,9 +74,11 @@ export function annotationSnapshotIdOfSource(source: unknown): AnnotationSnapsho
   if (typeof source !== 'object' || source === null || Array.isArray(source)) return undefined
   const record = source as Record<string, unknown>
   const snapshotId = record.snapshotId
+  // v4 producer kind, or the released wrapper a pre-upgrade session recorded.
+  const producer = record.kind === 'plugin:dsh-web-review'
+    || (record.kind === 'plugin' && record.plugin === 'dsh-web-review')
   if (
-    record.kind !== 'plugin' || record.plugin !== 'dsh-web-review'
-    || typeof snapshotId !== 'string' || snapshotId.length < 1
+    !producer || typeof snapshotId !== 'string' || snapshotId.length < 1
     || snapshotId.length > ANNOTATION_LIMITS.snapshotId
   ) return undefined
   return AnnotationSnapshotId(snapshotId)

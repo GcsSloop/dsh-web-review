@@ -45,8 +45,7 @@ describe('Browser Comments durable presentation', () => {
 
   it('accepts only the exact snapshot-form payload and declines malformed or foreign records', () => {
     const source = {
-      kind: 'plugin',
-      plugin: 'dsh-web-review',
+      kind: 'plugin:dsh-web-review',
       form: 'snapshot',
       snapshotId: AnnotationSnapshotId('snapshot-1'),
       sections: [
@@ -55,7 +54,16 @@ describe('Browser Comments durable presentation', () => {
       ],
     }
     expect(browserCommentsContextSourceOf(source)).toEqual(source)
-    expect(browserCommentsContextSourceOf({ ...source, plugin: 'foreign' })).toBeUndefined()
+    // A session recorded before the v4 producer rename still wears the wrapper.
+    expect(browserCommentsContextSourceOf({
+      kind: 'plugin',
+      plugin: 'dsh-web-review',
+      form: 'snapshot',
+      snapshotId: source.snapshotId,
+      sections: source.sections,
+    })).toEqual(source)
+    expect(browserCommentsContextSourceOf({ kind: 'plugin', plugin: 'foreign', form: 'snapshot' })).toBeUndefined()
+    expect(browserCommentsContextSourceOf({ ...source, kind: 'plugin:foreign' })).toBeUndefined()
     expect(browserCommentsContextSourceOf({ ...source, extra: true })).toBeUndefined()
     expect(browserCommentsContextSourceOf({ ...source, form: 'browser-comments' })).toBeUndefined()
     expect(browserCommentsContextSourceOf({ ...source, sections: [] })).toBeUndefined()
