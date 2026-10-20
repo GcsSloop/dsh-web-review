@@ -462,17 +462,17 @@ function AnnotationDockBody(props: WebviewDockProps) {
     }
     sessionRef.current?.commitEdit(current.id, current.target.handle, value.changes, value.textChange)
     const rect = current.target.rect
-    void sessionRef.current?.capture(rect).then((shot) => {
+    void sessionRef.current?.capture(rect, current.target.viewport).then((shot) => {
       reportDiagnostics({
         kind: 'capture',
-        ok: shot !== undefined,
-        bytes: shot?.length ?? 0,
+        ok: shot.data !== undefined,
+        bytes: shot.data?.length ?? 0,
         rect,
-        guest: (sessionRef.current as unknown as { guestIsNull?: unknown })?.guestIsNull,
+        ...(shot.error === undefined ? {} : { error: shot.error }),
       })
-      if (shot === undefined) return
-      if (!stateRef.current.picks.some(existing => existing.id === current.id) && current.existing === null) return
-      screenshots.current.set(current.id, shot)
+      if (shot.data === undefined) return
+      if (!stateRef.current.picks.some(existing => existing.id === current.id)) return
+      screenshots.current.set(current.id, shot.data)
       actionsRef.current.updatePick(current.id, stateRef.current.picks.find(item => item.id === current.id) ?? pick)
     }).catch(() => undefined)
     if (current.existing === null) actions.addPick(pick)

@@ -53,9 +53,9 @@ export interface WebviewGuest {
   getURL: () => string
   getTitle: () => string
   getBoundingClientRect: () => { width: number; height: number; top: number; left: number; right: number; bottom: number }
-  /** Electron's guest capture: the annotated element's own pixels. */
-  capturePage?: (rect?: { x: number; y: number; width: number; height: number }) => Promise<{
-    toPNG: () => Uint8Array
+  /** Electron's guest capture. Only the no-argument form works in a sandbox. */
+  capturePage?: () => Promise<{
+    toDataURL: () => string
     getSize: () => { width: number; height: number }
   }>
 }
@@ -168,50 +168,57 @@ export function guestPageUrl(guest: WebviewGuest): string | undefined {
 /** Longest edge of one capture; larger elements are shot at a reduced scale. */
 const MAX_CAPTURE_EDGE = 1_200
 
-/** Browser-safe base64 (the client bundle has no Node `Buffer`). */
-function toBase64(bytes: Uint8Array): string {
-  let binary = ''
-  const chunk = 0x8000
-  for (let index = 0; index < bytes.length; index += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunk))
-  }
-  return btoa(binary)
+/** One capture attempt: base64 PNG when it worked, refusal text when it did not. */
+export interface CaptureResult {
+  data?: string
+  error?: string
 }
 
 /**
  * Capture the annotated element's rectangle as base64 PNG.
  *
- * The host cannot read the guest's pixels any other way, and the annotation
- * review is much easier with the element's own picture beside the comment.
+ * The `capturePage(rect)` overload cannot be used from this renderer: Electron's
+ * webview implementation needs Node's `Buffer` there, and the desktop shell runs
+ * the page sandboxed (`sandbox: true`, no Node), so that call rejects with
+ * "Buffer is not available for the current Context". The no-argument form works,
+ * so the guest is captured whole and the element's rectangle is cropped out of it
+ * with a canvas, using the page viewport to map CSS pixels onto image pixels.
  * @param guest - the Browser guest owning the page.
  * @param rect - element rectangle in page CSS pixels.
- * @returns canonical base64 PNG, or undefined when the guest cannot capture.
+ * @param viewport - the page viewport the rectangle is measured against.
+ * @returns the crop, or the reason it could not be taken.
  */
 export async function captureGuestRect(
   guest: WebviewGuest,
   rect: { x: number; y: number; width: number; height: number },
-): Promise<string | undefined> {
+  viewport: { width: number; height: number },
+): Promise<CaptureResult> {
   const capture = guest.capturePage
-  if (typeof capture !== 'function') return undefined
-  const bounds = {
-    x: Math.max(0, Math.floor(rect.x)),
-    y: Math.max(0, Math.floor(rect.y)),
-    width: Math.max(1, Math.ceil(rect.width)),
-    height: Math.max(1, Math.ceil(rect.height)),
-  }
-  const scale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(bounds.width, bounds.height))
+  if (typeof capture !== 'function') return { error: 'capturePage unavailable' }
   try {
-    const image = await capture.call(guest, {
-      x: bounds.x,
-      y: bounds.y,
-      width: Math.max(1, Math.round(bounds.width * scale)),
-      height: Math.max(1, Math.round(bounds.height * scale)),
-    })
-    const png = image.toPNG()
-    if (png.byteLength === 0) return undefined
-    return toBase64(png)
-  } catch {
-    return undefined
+    const image = await capture.call(guest)
+    const dataUrl = image.toDataURL()
+    const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob())
+    const scaleX = bitmap.width / Math.max(1, viewport.width)
+    const scaleY = bitmap.height / Math.max(1, viewport.height)
+    const sx = Math.min(bitmap.width - 1, Math.max(0, Math.floor(rect.x * scaleX)))
+    const sy = Math.min(bitmap.height - 1, Math.max(0, Math.floor(rect.y * scaleY)))
+    const sw = Math.min(bitmap.width - sx, Math.max(1, Math.ceil(rect.width * scaleX)))
+    const sh = Math.min(bitmap.height - sy, Math.max(1, Math.ceil(rect.height * scaleY)))
+    const outScale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(sw, sh))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(sw * outScale))
+    canvas.height = Math.max(1, Math.round(sh * outScale))
+    const context = canvas.getContext('2d')
+    if (context === null) return { error: 'canvas unavailable' }
+    context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
+    bitmap.close()
+    const encoded = canvas.toDataURL('image/png')
+    const comma = encoded.indexOf(',')
+    if (comma < 0) return { error: 'empty capture' }
+    return { data: encoded.slice(comma + 1) }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message.slice(0, 200) : 'capture failed' }
   }
 }
 
