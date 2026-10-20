@@ -32,7 +32,6 @@ import {
   type BrowserIdleReason,
   type BrowserPage,
 } from './browser-annotation.ts'
-import { reportDiagnostics } from './self-check.ts'
 import type { BrowserGuestScan } from './webview-guest.ts'
 import type { PickItem } from './contract.ts'
 import { elementLabel } from './element-label.ts'
@@ -128,7 +127,6 @@ class DockBoundary extends Component<{ children: ReactNode; t: WebviewDockProps[
 
   static getDerivedStateFromError(error: unknown): { message: string } {
     const message = error instanceof Error ? error.message : String(error)
-    reportDiagnostics({ kind: 'dock', event: 'dock-error', message })
     return { message }
   }
 
@@ -302,15 +300,6 @@ function AnnotationDockBody(props: WebviewDockProps) {
   }
 
   onPickRef.current = (target) => {
-    reportDiagnostics({
-      kind: 'pick',
-      tagName: target.snapshot.tagName,
-      cssPath: target.snapshot.cssPath,
-      label: target.snapshot.label,
-      rect: target.rect,
-      viewport: target.viewport,
-      detail: target.detail,
-    })
     if (stateRef.current.picks.length >= MAX_ANNOTATIONS) {
       actionsRef.current.setError(tRef.current('panel.pick.limit', { count: String(MAX_ANNOTATIONS) }))
       sessionRef.current?.cancelEdit()
@@ -382,11 +371,9 @@ function AnnotationDockBody(props: WebviewDockProps) {
     })
     sessionRef.current = session
     session.start()
-    reportDiagnostics({ kind: 'dock', event: 'dock-mounted', sessionId: String(props.sessionId ?? '') })
     return () => {
       session.stop()
       sessionRef.current = null
-      reportDiagnostics({ kind: 'dock', event: 'dock-unmounted' })
     }
   }, [])
 
@@ -463,13 +450,6 @@ function AnnotationDockBody(props: WebviewDockProps) {
     sessionRef.current?.commitEdit(current.id, current.target.handle, value.changes, value.textChange)
     const rect = current.target.rect
     void sessionRef.current?.capture(rect, current.target.viewport).then((shot) => {
-      reportDiagnostics({
-        kind: 'capture',
-        ok: shot.data !== undefined,
-        bytes: shot.data?.length ?? 0,
-        rect,
-        ...(shot.error === undefined ? {} : { error: shot.error }),
-      })
       if (shot.data === undefined) return
       if (!stateRef.current.picks.some(existing => existing.id === current.id)) return
       screenshots.current.set(current.id, shot.data)

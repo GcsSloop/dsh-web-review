@@ -5,6 +5,7 @@
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
+  'command.skills.label': 'skills',
   'command.skills.description': '选择一个 UI 优化 Skill',
   'dock.annotate': '批注页面',
   'dock.annotate.resume': '继续批注',
@@ -191,6 +192,7 @@ export const zh = {
 
 /** English dictionary (same keys as {@link zh}). */
 export const en: Record<WebviewKey, string> = {
+  'command.skills.label': 'skills',
   'command.skills.description': 'Choose one UI optimization Skill',
   'dock.annotate': 'Annotate page',
   'dock.annotate.resume': 'Resume annotating',

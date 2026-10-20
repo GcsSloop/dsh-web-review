@@ -150,13 +150,13 @@ Chromium 在受限沙箱里起不来——这也是 `pnpm check` 里 4 个 CDP �
 | 截图只进上下文、不进用户消息 | `IConversation.send()` 只收文本；`createDraftImages` 在 0.2.x 已移除 | 用仍可用的 `createDrafts(sessionId, files)` + 公开 `inputActions.addAttachments/submit`，走标准草稿提交流程 |
 | 发送按钮被侧栏遮挡 | 行内文本成员按内容自然宽度排，诊断读数把按钮挤出列 | 只有文本成员收缩，控件不收缩，`发送` 用 `margin-left:auto`；容器 < 620px 隐藏诊断读数 |
 
-诊断脚手架（**发布前必须删**）：
+诊断脚手架（**已在收尾时全部移除**，提交见 git log）：
 
-- `GET/POST /webview-diagnostics` 路由（`src/index.ts`）与 `WEBVIEW_DIAGNOSTICS_*` 常量；
-- `src/client/self-check.ts`（心跳 + `console.error`/`error`/`unhandledrejection` 转发；徽标已隐藏但仍在 DOM）；
-- dock 里那些 `reportDiagnostics(...)` 调用（`capture`、`admission`、`pick`、`dock-*`）。
+- `GET/POST /webview-diagnostics` 路由、`WEBVIEW_DIAGNOSTICS_*` 常量、`self-check.ts`、
+  dock 里的 `reportDiagnostics(...)` 调用，以及对应测试。
 
-它们让「无控制台的桌面壳」变成了可观测环境，是本轮能定位问题的关键，但不应进正式版本。
+它们让「无控制台的桌面壳」变成了可观测环境，是本轮能定位问题的关键。以后再遇到同类问题，
+可以照同样的形状临时加回来：客户端 POST 一条有界快照 → node 存环形缓冲 → `curl` 读。
 
 ## 待完成（按此顺序）
 
@@ -224,7 +224,22 @@ mv dsh-web-review.bak-20261020-235156 dsh-web-review
 注意：`desktop` profile 由 Electron 管理，客户端更新或插件管理器操作会覆盖这条软链；
 长期用插件管理器装正式版本更稳（发布后 `dsh-web-review@1.1.x`）。
 
-### 2. 死代码清理
+### 2. 死代码清理（已完成）
+
+已删除：`src/client/sidebar/PreviewTab.tsx` + `PreviewTab.module.css`、`browser-surface.ts`、
+`native-surface.ts`、`preview-session.ts`、`editor-size-memory.ts` 及其 spec；`tests/panel.spec.tsx`
+只保留胶囊用例；`ctx.sidebarRight` 的类型声明移到了 `client/index.ts`。
+
+节点半边的旧预览传输（`/webview-preview-sessions`、CDP、native panel）仍在，因为控制路由与
+E2E 依赖它们；是否整块删除是另一个决定。
+
+### 3. `ctx.layout.closeDetails` / `/skills`（已完成）
+
+- `closeDetails` 在 0.2.x 不存在，已改为可选调用（不再让助手链接点击抛错）；
+- `/skills` 命令在 0.2.x 的菜单里要靠 `label` 才成行，已补 `label` + `searchMode`，
+  并让 `onSelect` 同时接受 session 与 binding 两种上下文。
+
+### 4. 剩下的死代码线索
 
 `src/client/sidebar/PreviewTab.tsx`（1025 行）与 `preview-session.ts` 的客户端出口
 现在无人调用，只是因为 `tests/panel.spec.tsx` 还在测它而保留。清理时要一起处理：

@@ -39,10 +39,16 @@ import { PREVIEW_CLIENT_HEADER, PREVIEW_CLIENT_HEADER_VALUE } from '../preview-c
 import { en, zh, type WebviewKey } from './locales.ts'
 import { createWebviewStore } from './stores.ts'
 import { AnnotationDock } from './AnnotationDock.tsx'
-import { installSelfCheck, reportDiagnostics } from './self-check.ts'
 import { type WebviewDockInjected } from './DraftOverlayBar.tsx'
 import { normalizePreviewUrl } from './navigation-url.ts'
 import { isUiSkillName, UI_SKILLS, type UiSkillName } from '../ui-skills.ts'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    /** Right Sidebar navigation controller; absent when the host package is unmounted. */
+    sidebarRight?: { openTab: (kind: string, options?: { params?: Record<string, unknown> }) => void }
+  }
+}
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -212,23 +218,9 @@ async function sendWithScreenshots(
   }
 }
 
-export { createPreviewSession, releasePreviewSessions } from './preview-session.ts'
-
 /** The plugin body: dictionaries and the two shared-store registrations. */
 export function apply(ctx: ClientContext): void {
-  reportDiagnostics({ kind: 'apply', event: 'client-apply-start' })
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-web-review: dictionaries')
-  // TEMPORARY: a self-check badge outside React, until the Browser attachment is
-  // verified on the real client. Remove with self-check.ts. Diagnostics must
-  // never take the plugin down with them.
-  ctx.effect(() => {
-    try {
-      return installSelfCheck()
-    } catch (error) {
-      console.error('[dsh-web-review] self-check unavailable', error)
-      return () => undefined
-    }
-  }, 'dsh-web-review: self-check badge')
 
   // Registration-time text (the guide capsule) reads through the bound
   // translate as a thunk, so it follows the active locale without
@@ -247,22 +239,34 @@ export function apply(ctx: ClientContext): void {
   void webviewStore
 
   ctx.inject(['commandUi'], (scope: ClientContext) => {
-    scope.effect(() => scope.commandUi.register({
+    // The reviewed alpha.5 types describe `description` as text and know nothing
+    // of `label`/`searchMode`, while the 0.2.x menu builds its rows from `label`;
+    // one contribution object carries both faces.
+    const contribution = {
       name: 'skills',
+      label: () => t('command.skills.label'),
       description: t('command.skills.description'),
       available: () => true,
       ui: {
         kind: 'popupSelect',
+        searchMode: 'fuzzy-label',
         options: () => Promise.resolve(UI_SKILLS.map(skill => ({
           id: skill.name,
           label: skill.name,
           detail: t(SKILL_DESCRIPTION_KEYS[skill.name]),
         }))),
-        onSelect: (option, session) => {
-          setUiSkillDraft(scope, session.sessionId, option.id)
+        onSelect: (option: { id: string }, context: unknown) => {
+          // Hosts hand the popup either the session or a binding carrying it.
+          const carrier = context as { sessionId?: SessionId; session?: { sessionId?: SessionId } } | undefined
+          const sessionId = carrier?.sessionId ?? carrier?.session?.sessionId
+          if (sessionId !== undefined) setUiSkillDraft(scope, sessionId, option.id)
         },
       },
-    }), 'dsh-web-review: /skills contribution')
+    }
+    scope.effect(
+      () => scope.commandUi.register(contribution as Parameters<typeof scope.commandUi.register>[0]),
+      'dsh-web-review: /skills contribution',
+    )
   })
 
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({

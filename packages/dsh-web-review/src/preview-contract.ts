@@ -104,13 +104,6 @@ export const PREVIEW_BROWSER_INPUT_PATH = '/webview-browser-input'
  * `executeJavaScript` instead.
  */
 export const PREVIEW_BRIDGE_SOURCE_PATH = '/webview-bridge-source'
-/**
- * Temporary diagnostics channel: the browser half POSTs one bounded state
- * snapshot, the node half keeps the latest and serves it back for inspection.
- */
-export const WEBVIEW_DIAGNOSTICS_PATH = '/webview-diagnostics'
-/** Largest diagnostics snapshot accepted (or served) in bytes. */
-export const WEBVIEW_DIAGNOSTICS_LIMIT = 16 * 1024
 
 declare const previewSessionIdBrand: unique symbol
 declare const previewChannelBrand: unique symbol
