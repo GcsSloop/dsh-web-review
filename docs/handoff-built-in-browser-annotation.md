@@ -100,11 +100,43 @@ webviewTag: false, plugins: false, devTools: !app.isPackaged
 4. 页面侧的拾取、标记圆点、样式/文本预览、回滚全部沿用既有 bridge，宿主侧完全复用既有协议。
 5. 批注快照仍走 `/webview-annotations` → `agent/pre-step`，与上一轮一致。
 
+## 已验证：Electron 真机机制冒烟（2026-10-20）
+
+在真实的 **Electron 44.7.0（与官方客户端同版本）** 里用与 DSH 主进程完全相同的
+webview 策略（`sandbox: true` / `contextIsolation: true` / `nodeIntegration: false`）
+跑通了一次完整链路，用的就是构建产物 `lib/bridge.js`：
+
+```
+dom-ready
+loaded  http://127.0.0.1:63037/app/  title=Smoke
+probe   { href, title, ready: true }          ← executeJavaScript 回传结构体
+drain   []                                     ← 注入队列后抽干
+drain-large { length: 20000 }                  ← 20KB payload 无损
+bridge-injected                                ← 注入真实 bridge + config
+bridge-ready ["ready"]                         ← channel / pageUrl / viewport 正确
+picker-armed true                              ← host 命令 → dsh-wv-picking
+pick    { cssPath: "#go", tagName: "button", label: "Go", handle: true }
+responses ["1-smoke"]                          ← 命令响应走同一队列
+```
+
+结论：`executeJavaScript` 双向、队列轮询、bridge 注入、拾取事件、命令响应的机制全部成立。
+冒烟工装不在仓库里（gitignored `.artifacts/electron-smoke`），复现方式：
+
+```sh
+cd .artifacts/electron-smoke      # package.json + main.js + index.html，Electron 44.7.0
+cp ../dsh-web-review/packages/dsh-web-review/lib/bridge.js .
+env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron . \
+  --no-sandbox --disable-gpu --user-data-dir="$PWD/udd"
+```
+
+（`ELECTRON_RUN_AS_NODE` 是 DSH 运行时注入的；不加 `--no-sandbox --disable-gpu` 时
+Chromium 在受限沙箱里起不来——这也是 `pnpm check` 里 4 个 CDP 用例在本机失败的原因。）
+
 ## 待完成（按此顺序）
 
-### 1. 真机验收（唯一还没做的验证）
+### 1. 真机验收（剩下唯一没做的验证）
 
-代码路径已被 jsdom 全覆盖，但**没有任何一次运行是在真实 Electron webview 里做的**。
+机制已冒烟，但**插件在真实客户端里的装载与 UI 还没有跑过一次**。
 需要：把当前 checkout 装进 `~/.dsh/profiles/desktop`，完全退出并重开客户端，然后：
 
 - 打开右侧「浏览器」Tab 加载一个 http(s) 页面（可用 `pnpm demo` 的 5173，或任意站点）；
