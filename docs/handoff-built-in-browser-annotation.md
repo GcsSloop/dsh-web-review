@@ -132,6 +132,32 @@ env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron . \
 （`ELECTRON_RUN_AS_NODE` 是 DSH 运行时注入的；不加 `--no-sandbox --disable-gpu` 时
 Chromium 在受限沙箱里起不来——这也是 `pnpm check` 里 4 个 CDP 用例在本机失败的原因。）
 
+## 第 3 轮：真机跑通（2026-10-21）
+
+内置浏览器批注已在官方客户端（Electron 44.7.0 / DSH 0.2.1-rc.2）跑通完整闭环：
+点选 → 写批注 → 截图 → 发送 → 可见消息带详情与图片 → 结构化上下文 → Agent 收到并可回答/改码。
+
+路上修掉的坑（都已提交，按重要性）：
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| dock 出现后整个消失 | 宿主 0.2.x 图标改名（`IconXOutline16` → `IconXOutlineRegular`），渲染 `undefined` 组件触发 React #130，整个 slot cell 被拆掉 | 插件自带 `client/icons.tsx` inline SVG，不再依赖宿主图标；`DockBoundary` 把渲染异常显示出来 |
+| 整轮失败 `format v4 message requires a producer-owned source kind` | v4 消息格式拒绝已退役的 `{kind:'plugin', plugin}` 包装 | 注入消息改用 `kind: 'plugin:dsh-web-review'`；回执解析兼容旧形状 |
+| 发送后胶囊不清空 | 清空依赖 chat 视图的 context 节点形状（0.2.x 把 `source` 放顶层，旧代码读 `node.data.source`） | 改为 node 记录「持久消息已准入」，客户端轮询 `GET /webview-annotations?sessionId=…` |
+| 选中的容器没有蓝框 | 选择框用元素自身 `getBoundingClientRect()`，容器自身尺寸为 0 | 取 client rect 并集 + 首个可见子元素兜底 |
+| 截图拿不到 | 沙箱渲染进程里 `webview.capturePage(rect)` 抛 "Buffer is not available for the current Context" | 无参抓整页 + canvas 按元素矩形裁剪（CSS→图片像素用视口换算） |
+| 抓到了但 node 收到 0 张 | 去重只比较渲染文本，带图的修订被当成重复丢弃 | 去重同时比较截图数组 |
+| 截图只进上下文、不进用户消息 | `IConversation.send()` 只收文本；`createDraftImages` 在 0.2.x 已移除 | 用仍可用的 `createDrafts(sessionId, files)` + 公开 `inputActions.addAttachments/submit`，走标准草稿提交流程 |
+| 发送按钮被侧栏遮挡 | 行内文本成员按内容自然宽度排，诊断读数把按钮挤出列 | 只有文本成员收缩，控件不收缩，`发送` 用 `margin-left:auto`；容器 < 620px 隐藏诊断读数 |
+
+诊断脚手架（**发布前必须删**）：
+
+- `GET/POST /webview-diagnostics` 路由（`src/index.ts`）与 `WEBVIEW_DIAGNOSTICS_*` 常量；
+- `src/client/self-check.ts`（心跳 + `console.error`/`error`/`unhandledrejection` 转发；徽标已隐藏但仍在 DOM）；
+- dock 里那些 `reportDiagnostics(...)` 调用（`capture`、`admission`、`pick`、`dock-*`）。
+
+它们让「无控制台的桌面壳」变成了可观测环境，是本轮能定位问题的关键，但不应进正式版本。
+
 ## 待完成（按此顺序）
 
 ### 0. 当前排查状态（2026-10-20 23:58）
