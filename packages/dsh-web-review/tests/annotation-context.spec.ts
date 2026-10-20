@@ -354,6 +354,31 @@ describe('annotation captures', () => {
     expect(oversized).toBeUndefined()
   })
 
+  it('replaces a pending snapshot when a capture arrives without a text change', () => {
+    const { agent, agents } = harness()
+    const state: AnnotationCommitState = new Map()
+    const base = snapshot()
+    const first = storeAnnotationSnapshot(agents, state, base)
+    expect(first.kind).toBe('pending')
+
+    // Same text, now with the element's capture: not a duplicate.
+    const withShot = storeAnnotationSnapshot(agents, state, {
+      ...base,
+      comments: [{ ...base.comments[0]!, screenshot: 'iVBORw0KGgoAAAANSUhEUg==' }],
+    })
+    expect(withShot.kind).toBe('pending')
+    if (withShot.kind !== 'pending') throw new Error('expected a new pending snapshot')
+    expect(withShot.pending.images).toHaveLength(1)
+    expect(withShot.pending.snapshotId).not.toBe(first.kind === 'pending' ? first.pending.snapshotId : '')
+
+    // The identical revision still deduplicates.
+    expect(storeAnnotationSnapshot(agents, state, {
+      ...base,
+      comments: [{ ...base.comments[0]!, screenshot: 'iVBORw0KGgoAAAANSUhEUg==' }],
+    }).kind).toBe('deduplicated')
+    expect(agent.id).toBeDefined()
+  })
+
   it('admits captures as durable image parts of the injected message', async () => {
     const { agent, agents } = harness()
     const state: AnnotationCommitState = new Map()

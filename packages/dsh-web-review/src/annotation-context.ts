@@ -450,15 +450,23 @@ export function storeAnnotationSnapshot(
   const context = formatAnnotationContext(snapshot)
   if (context.length > MAX_ANNOTATION_CONTEXT) return { kind: 'context-too-large' }
   const sections = annotationSections(snapshot)
+  const images = snapshot.comments.flatMap(comment => (comment.screenshot === undefined ? [] : [comment.screenshot]))
+  // A capture does not change the rendered context, so comparing the text alone
+  // would drop the image-bearing revision as a duplicate and keep the pending
+  // snapshot that has no pictures.
+  const sameImages = previous !== undefined
+    && previous.images.length === images.length
+    && previous.images.every((image, index) => image === images[index])
   if (
     context === previous?.context
+    && sameImages
     && snapshot.selectedSkills.length === previous.selectedSkills.length
     && snapshot.selectedSkills.every((name, index) => previous.selectedSkills[index] === name)
   ) return { kind: 'deduplicated', pending: previous }
   const pending = {
     snapshotId: AnnotationSnapshotId(randomUUID()),
     context,
-    images: snapshot.comments.flatMap(comment => (comment.screenshot === undefined ? [] : [comment.screenshot])),
+    images,
     sections,
     presentation: browserCommentsPresentationOf(snapshot),
     selectedSkills: [...snapshot.selectedSkills],
