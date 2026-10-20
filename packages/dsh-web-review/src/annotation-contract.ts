@@ -6,7 +6,7 @@
  */
 
 /** Maximum encoded request body accepted by `/webview-annotations`. */
-export const MAX_ANNOTATION_BODY = 64 * 1024
+export const MAX_ANNOTATION_BODY = 4 * 1024 * 1024
 /** Maximum annotations carried by one full snapshot. */
 export const MAX_ANNOTATIONS = 20
 /** Maximum style fields on one element annotation. */
@@ -19,6 +19,8 @@ export const MAX_ANNOTATION_CONTEXT = 60 * 1024
 export const MAX_SELECTED_SKILLS = 8
 
 export const ANNOTATION_LIMITS = {
+  /** One comment's capture: ~1.5 MB of base64 carries a 2x element shot. */
+  screenshot: 2_000_000,
   sessionId: 512,
   pageUrl: 4_096,
   pageTitle: 500,
@@ -122,6 +124,8 @@ export interface AnnotationComment {
   textContent: string
   /** True when the element sits inside this plugin's own `[data-webview-ui]` chrome. */
   inToolChrome: boolean
+  /** Base64 PNG of the annotated element, when the host could capture one. */
+  screenshot?: string
   anchor: AnnotationAnchor | null
   changes: AnnotationStyleChange[]
   textChange: AnnotationTextChange | null

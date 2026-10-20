@@ -24,6 +24,7 @@ export function annotationDraft(
   title: string,
   picks: readonly PickItem[],
   selectedSkills: readonly UiSkillName[] = [],
+  screenshots: ReadonlyMap<string, string> = new Map(),
 ): AnnotationDraft {
   if (picks.length > MAX_ANNOTATIONS) throw new RangeError(`annotations exceed ${String(MAX_ANNOTATIONS)}`)
   return {
@@ -33,6 +34,7 @@ export function annotationDraft(
       title: bounded(title, ANNOTATION_LIMITS.pageTitle),
     },
     comments: picks.map(({ id, comment, snapshot, changes, textChange, viewport }) => ({
+      ...(screenshots.has(id) ? { screenshot: screenshots.get(id) as string } : {}),
       id: bounded(id, ANNOTATION_LIMITS.id),
       comment: exactIntent(comment, ANNOTATION_LIMITS.comment, 'comment'),
       tagName: bounded(snapshot.tagName, ANNOTATION_LIMITS.tagName),

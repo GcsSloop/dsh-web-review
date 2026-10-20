@@ -56,7 +56,7 @@ function receiptOf(id: string): AnnotationSyncReceipt {
 function renderDock(options: { sync?: WebviewDockInjected['syncAnnotations'] } = {}) {
   const store = createWebviewStore().create()
   const submit = vi.fn()
-  const sendAnnotationsWithoutDraft = vi.fn(async () => undefined)
+  const sendAnnotationsWithoutDraft = vi.fn(async (_prompt: string) => undefined)
   let sequence = 0
   const sync = options.sync ?? (async (draft: { comments: unknown[] }) => (
     draft.comments.length === 0 ? { kind: 'empty' as const } : receiptOf(`snapshot-${String(++sequence)}`)
@@ -182,6 +182,31 @@ describe('AnnotationDock', () => {
     })
     fireEvent.click(send)
     await waitFor(() => { expect(sendAnnotationsWithoutDraft).toHaveBeenCalledTimes(1) })
+  })
+
+  it('sends the annotations themselves, not a fixed sentence', async () => {
+    const guest = installFakeGuest({ url: 'http://localhost:5173/', title: 'Demo' })
+    const { store, sendAnnotationsWithoutDraft } = renderDock()
+    await armPicker(guest)
+    act(() => { guest.emit('pick', { target: fakeTargetPayload(HANDLE) }) })
+    await waitFor(() => { expect(document.querySelector('[data-webview-annotation-editor]')).not.toBeNull() })
+    fireEvent.change(screen.getByPlaceholderText(zh['editor.comment']), {
+      target: { value: '把主按钮改成圆角' },
+    })
+    fireEvent.click(screen.getByLabelText(zh['editor.confirm']))
+    await waitFor(() => { expect(store.getSnapshot().picks).toHaveLength(1) })
+
+    const send = await waitFor(() => {
+      const button = document.querySelector('[data-webview-annotation-send]') as HTMLButtonElement | null
+      expect(button?.disabled).toBe(false)
+      return button as HTMLButtonElement
+    })
+    fireEvent.click(send)
+    await waitFor(() => { expect(sendAnnotationsWithoutDraft).toHaveBeenCalledTimes(1) })
+    const prompt = sendAnnotationsWithoutDraft.mock.calls[0]?.[0] as string
+    expect(prompt).toContain('把主按钮改成圆角')
+    expect(prompt).toContain('#go')
+    expect(prompt).toContain('http://localhost:5173/')
   })
 
   it('reports a failure and leaves annotation mode when there is nothing to attach', async () => {

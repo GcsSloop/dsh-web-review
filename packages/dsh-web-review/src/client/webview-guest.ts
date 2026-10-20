@@ -53,6 +53,11 @@ export interface WebviewGuest {
   getURL: () => string
   getTitle: () => string
   getBoundingClientRect: () => { width: number; height: number; top: number; left: number; right: number; bottom: number }
+  /** Electron's guest capture: the annotated element's own pixels. */
+  capturePage?: (rect?: { x: number; y: number; width: number; height: number }) => Promise<{
+    toPNG: () => Uint8Array
+    getSize: () => { width: number; height: number }
+  }>
 }
 
 /** One page observation made on a poll. */
@@ -156,6 +161,56 @@ export function guestPageUrl(guest: WebviewGuest): string | undefined {
     return isPreviewableUrl(url) ? url : undefined
   } catch {
     // `getURL` throws until the guest reaches dom-ready.
+    return undefined
+  }
+}
+
+/** Longest edge of one capture; larger elements are shot at a reduced scale. */
+const MAX_CAPTURE_EDGE = 1_200
+
+/** Browser-safe base64 (the client bundle has no Node `Buffer`). */
+function toBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const chunk = 0x8000
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk))
+  }
+  return btoa(binary)
+}
+
+/**
+ * Capture the annotated element's rectangle as base64 PNG.
+ *
+ * The host cannot read the guest's pixels any other way, and the annotation
+ * review is much easier with the element's own picture beside the comment.
+ * @param guest - the Browser guest owning the page.
+ * @param rect - element rectangle in page CSS pixels.
+ * @returns canonical base64 PNG, or undefined when the guest cannot capture.
+ */
+export async function captureGuestRect(
+  guest: WebviewGuest,
+  rect: { x: number; y: number; width: number; height: number },
+): Promise<string | undefined> {
+  const capture = guest.capturePage
+  if (typeof capture !== 'function') return undefined
+  const bounds = {
+    x: Math.max(0, Math.floor(rect.x)),
+    y: Math.max(0, Math.floor(rect.y)),
+    width: Math.max(1, Math.ceil(rect.width)),
+    height: Math.max(1, Math.ceil(rect.height)),
+  }
+  const scale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(bounds.width, bounds.height))
+  try {
+    const image = await capture.call(guest, {
+      x: bounds.x,
+      y: bounds.y,
+      width: Math.max(1, Math.round(bounds.width * scale)),
+      height: Math.max(1, Math.round(bounds.height * scale)),
+    })
+    const png = image.toPNG()
+    if (png.byteLength === 0) return undefined
+    return toBase64(png)
+  } catch {
     return undefined
   }
 }

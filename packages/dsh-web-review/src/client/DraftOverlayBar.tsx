@@ -32,7 +32,7 @@ export interface WebviewDockInjected {
    * empty; the stock input machine rejects an empty submit, so the dock needs
    * this explicit path.
    */
-  sendAnnotationsWithoutDraft: () => Promise<void>
+  sendAnnotationsWithoutDraft: (prompt: string) => Promise<void>
 }
 
 /** Full composed props: dock runtime + shared store + locale + inject. */
@@ -48,6 +48,8 @@ export type WebviewDockProps =
  */
 export interface DraftOverlayBarOptions {
   inline?: boolean
+  /** Element captures keyed by pick id; rides the injected body as a comment image. */
+  screenshots?: ReadonlyMap<string, string>
 }
 
 function kindOf(snapshot: ElementSnapshot): string {
@@ -65,17 +67,25 @@ function sourceOf(pick: PickItem): string {
   return anchor.component.trim() === '' ? source : `${source} · ${anchor.component}`
 }
 
-/** Snapshot id carried by the newest plugin-authored chat context node, if any. */
+/**
+ * Snapshot id carried by the newest plugin-authored chat context node, if any.
+ *
+ * The context node exposes its source at the top level in the 0.2.x chat view
+ * (`{ kind: 'context', source }`) and nested under `data` on older shapes; read
+ * both so an admitted Browser comments message clears the dock.
+ */
 function latestAnnotationContextIdOf(chat: unknown): ReturnType<typeof annotationSnapshotIdOfSource> | undefined {
   const snapshot = chat as {
     readonly order?: readonly string[]
-    readonly nodes?: { get(key: string): { kind?: string; data?: { source?: unknown } } | undefined }
+    readonly nodes?: {
+      get(key: string): { kind?: string; source?: unknown; data?: { source?: unknown } } | undefined
+    }
   }
   const order = snapshot.order ?? []
   for (let index = order.length - 1; index >= 0; index -= 1) {
     const node = snapshot.nodes?.get(order[index] ?? '')
     if (node?.kind !== 'context') continue
-    const id = annotationSnapshotIdOfSource(node.data?.source)
+    const id = annotationSnapshotIdOfSource(node.source ?? node.data?.source)
     if (id !== undefined) return id
   }
   return undefined
@@ -90,6 +100,7 @@ export function DraftOverlayBar({
   openPreview,
   t,
   inline = false,
+  screenshots = new Map<string, string>(),
 }: WebviewDockProps & DraftOverlayBarOptions) {
   const state = useStore((s) => s)
   const latestAnnotationContextId = useChat(chat => latestAnnotationContextIdOf(chat))
@@ -131,7 +142,7 @@ export function DraftOverlayBar({
     if (!clearing) hadAnnotations.current = true
     const currentRevision = ++revision.current
     if (!initialEmpty) actions.setAnnotationSync({ status: 'syncing' })
-    const snapshot = annotationDraft(state.url, state.title, state.picks, state.selectedSkills)
+    const snapshot = annotationDraft(state.url, state.title, state.picks, state.selectedSkills, screenshots)
     void syncAnnotations(snapshot).then(
       (receipt) => {
         if (revision.current !== currentRevision) return

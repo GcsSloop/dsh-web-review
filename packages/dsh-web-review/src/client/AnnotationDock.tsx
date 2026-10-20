@@ -35,6 +35,7 @@ import {
 import { reportDiagnostics } from './self-check.ts'
 import type { BrowserGuestScan } from './webview-guest.ts'
 import type { PickItem } from './contract.ts'
+import { elementLabel } from './element-label.ts'
 import { DraftOverlayBar, type WebviewDockProps } from './DraftOverlayBar.tsx'
 import type { FloatingEditorSize } from './floating-position.ts'
 import css from './AnnotationDock.module.css'
@@ -68,6 +69,45 @@ function clamp(value: number, min: number, max: number): number {
 function pickId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/**
+ * Build the message the user sends with their annotations.
+ *
+ * The durable plugin context already carries the structured snapshot, but a
+ * terse fixed sentence leaves the conversation impossible to review later: the
+ * visible message names the page, every target, the user's own words, and any
+ * style/text change, so the log reads like the review it was.
+ */
+export function composeAnnotationRequest(
+  url: string,
+  title: string,
+  picks: readonly PickItem[],
+  t: WebviewDockProps['t'],
+): string {
+  const page = title.trim() === '' ? url : title.trim()
+  const lines: string[] = [t('dock.request.header', { page }), url, '']
+  picks.forEach((pick, index) => {
+    const kind = pick.snapshot.role.trim() || pick.snapshot.tagName.trim() || 'element'
+    lines.push(`${String(index + 1)}. ${kind}「${elementLabel(pick.snapshot)}」`)
+    if (pick.snapshot.cssPath !== '') lines.push(`   ${t('dock.request.selector', { selector: pick.snapshot.cssPath })}`)
+    if (pick.comment.trim() !== '') lines.push(`   ${pick.comment.trim()}`)
+    for (const change of pick.changes) {
+      lines.push(`   ${t('dock.request.style', {
+        property: change.property,
+        before: change.before,
+        after: change.after,
+      })}`)
+    }
+    if (pick.textChange !== null) {
+      lines.push(`   ${t('dock.request.text', {
+        before: pick.textChange.before,
+        after: pick.textChange.after,
+      })}`)
+    }
+    lines.push('')
+  })
+  return lines.join('\n').trim()
 }
 
 function maxSheetHeight(): number {
@@ -153,6 +193,8 @@ function AnnotationDockBody(props: WebviewDockProps) {
   const editorRef = useRef(editor)
   editorRef.current = editor
   const navigationSequence = useRef(0)
+  /** Base64 captures taken when a pick was confirmed, sent with the annotation drag. */
+  const screenshots = useRef(new Map<string, string>())
   const handledPickResetRevision = useRef(state.pickResetRevision)
   const promptErrorAtSend = useRef(promptError)
   const onPickRef = useRef<(target: PreviewElementTarget) => void>(() => undefined)
@@ -375,6 +417,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
       sessionRef.current?.cancelEdit()
       setEditor(null)
     }
+    for (const id of [...screenshots.current.keys()]) if (!ids.has(id)) screenshots.current.delete(id)
     sessionRef.current?.setPicks(state.picks)
   }, [state.pickResetRevision, state.picks])
 
@@ -418,6 +461,13 @@ function AnnotationDockBody(props: WebviewDockProps) {
       viewport: value.viewport,
     }
     sessionRef.current?.commitEdit(current.id, current.target.handle, value.changes, value.textChange)
+    const rect = current.target.rect
+    void sessionRef.current?.capture(rect).then((shot) => {
+      if (shot === undefined) return
+      if (!stateRef.current.picks.some(existing => existing.id === current.id) && current.existing === null) return
+      screenshots.current.set(current.id, shot)
+      actionsRef.current.updatePick(current.id, stateRef.current.picks.find(item => item.id === current.id) ?? pick)
+    }).catch(() => undefined)
     if (current.existing === null) actions.addPick(pick)
     else actions.updatePick(current.id, pick)
     setEditor(null)
@@ -446,7 +496,9 @@ function AnnotationDockBody(props: WebviewDockProps) {
       return
     }
     try {
-      await sendAnnotationsWithoutDraft()
+      await sendAnnotationsWithoutDraft(
+        composeAnnotationRequest(stateRef.current.url, stateRef.current.title, stateRef.current.picks, t),
+      )
       if (stateRef.current.pickMode) actionsRef.current.togglePickMode()
     } catch {
       actions.setError(t('panel.pick.sendError'))
@@ -537,7 +589,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
             <IconTrash size={14} />
           </button>
         )}
-        <DraftOverlayBar {...props} inline />
+        <DraftOverlayBar {...props} inline screenshots={screenshots.current} />
         <span className={css.scan} data-webview-annotation-scan="">{scanLabel}</span>
         {state.picks.length > 0 && (
           <button

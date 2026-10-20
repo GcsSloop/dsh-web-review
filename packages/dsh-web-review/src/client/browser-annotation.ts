@@ -35,6 +35,7 @@ import { isPreviewableUrl } from '../proxy-url.ts'
 import type { PickItem } from './contract.ts'
 import { PreviewBridgeClient, type PreviewReadyState } from './preview-bridge.ts'
 import {
+  captureGuestRect,
   guestOnScreen,
   guestPageTitle,
   guestPageUrl,
@@ -187,6 +188,12 @@ export class BrowserAnnotationSession {
   setPicks(picks: readonly PickItem[]): void {
     this.picks = picks
     this.bridge?.syncMarkers(picks)
+  }
+
+  /** Capture one element rectangle for the annotation review. */
+  async capture(rect: { x: number; y: number; width: number; height: number }): Promise<string | undefined> {
+    const guest = this.guest
+    return guest === null ? undefined : await captureGuestRect(guest, rect)
   }
 
   /** Re-open one existing pick's element in the page. */

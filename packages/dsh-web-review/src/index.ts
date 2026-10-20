@@ -19,6 +19,7 @@ import {
   readRequestBody,
   storeAnnotationSnapshot,
   type AnnotationCommitState,
+  type AnnotationImageStore,
 } from './annotation-context.ts'
 import { PREVIEW_GUIDANCE } from './preview-guidance.ts'
 import {
@@ -133,8 +134,11 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     path: WEBVIEW_DIAGNOSTICS_PATH,
     handler: diagnosticsHandler(diagnostics),
   }), 'dsh-web-review: /webview-diagnostics route')
+  // The host's attachment store turns each capture into a durable image block;
+  // a deployment without it keeps the text-only context.
+  const images = ctx.get('attachments') as AnnotationImageStore | undefined
   ctx.on('agent/pre-step', ({ agent, messages, signal }, next) =>
-    attachPendingAnnotationContext(annotations, agent, ctx.skills, signal, messages, next))
+    attachPendingAnnotationContext(annotations, agent, ctx.skills, signal, messages, next, images))
   ctx.on('session/event', (session, event) => {
     acknowledgeAnnotationEvent(annotations, session.id, event)
   })

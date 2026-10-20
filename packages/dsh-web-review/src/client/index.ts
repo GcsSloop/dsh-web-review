@@ -243,7 +243,11 @@ export function apply(ctx: ClientContext): void {
       // a draft ask the session directly; a non-empty draft instead goes through
       // the composer's own submit action, which keeps serialization and queueing
       // stock behavior.
-      sendAnnotationsWithoutDraft: () => scopedConversation(ctx, sessionId).send(t('panel.pick.defaultPrompt')),
+      // The dock composes the visible request from the annotations themselves; the
+      // fixed sentence is only the fallback when it has nothing to say.
+      sendAnnotationsWithoutDraft: (prompt) => scopedConversation(ctx, sessionId).send(
+        prompt.trim() === '' ? t('panel.pick.defaultPrompt') : prompt,
+      ),
     }),
   }, AnnotationDock))
 }
