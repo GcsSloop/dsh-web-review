@@ -516,6 +516,35 @@ describe('isolated preview Origin (real Loader + webserver composition)', () => 
   })
 })
 
+describe('/webview-diagnostics (real Loader + webserver composition)', () => {
+  it('keeps the browser half snapshots for inspection and requires the client header', async () => {
+    await loadComposition()
+    const origin = `http://127.0.0.1:${String(port)}`
+    const post = (body: string): Promise<Response> => fetch(`${origin}/webview-diagnostics`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE },
+      body,
+    })
+    expect((await post(JSON.stringify({ kind: 'dock', event: 'dock-mounted' }))).status).toBe(204)
+    expect((await post(JSON.stringify({
+      kind: 'tick',
+      scan: { guests: 1, webviews: 1, framed: 1, iframes: 0 },
+    }))).status).toBe(204)
+
+    const read = await fetch(`${origin}/webview-diagnostics`, {
+      headers: { [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE },
+    })
+    expect(read.status).toBe(200)
+    const stored = await read.json() as { receivedAt: string; payload: unknown }[]
+    expect(stored.length).toBeGreaterThanOrEqual(2)
+    expect(stored.at(-1)?.payload).toMatchObject({ kind: 'tick', scan: { guests: 1 } })
+
+    // Without the plugin client header the route is not readable.
+    expect((await fetch(`${origin}/webview-diagnostics`)).status).toBe(415)
+    expect((await post('not json')).status).toBe(400)
+  })
+})
+
 describe('/webview-annotations (real Loader + webserver composition)', () => {
   it('stores pending context for a live agent without injecting and deduplicates it', async () => {
     await loadComposition()

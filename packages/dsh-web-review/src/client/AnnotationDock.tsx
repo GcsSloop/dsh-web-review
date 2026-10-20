@@ -32,6 +32,7 @@ import {
   type BrowserIdleReason,
   type BrowserPage,
 } from './browser-annotation.ts'
+import { reportDiagnostics } from './self-check.ts'
 import type { BrowserGuestScan } from './webview-guest.ts'
 import type { PickItem } from './contract.ts'
 import { DraftOverlayBar, type WebviewDockProps } from './DraftOverlayBar.tsx'
@@ -86,7 +87,9 @@ class DockBoundary extends Component<{ children: ReactNode; t: WebviewDockProps[
   override state = { message: null as string | null }
 
   static getDerivedStateFromError(error: unknown): { message: string } {
-    return { message: error instanceof Error ? error.message : String(error) }
+    const message = error instanceof Error ? error.message : String(error)
+    reportDiagnostics({ kind: 'dock', event: 'dock-error', message })
+    return { message }
   }
 
   override render(): ReactNode {
@@ -328,9 +331,11 @@ function AnnotationDockBody(props: WebviewDockProps) {
     })
     sessionRef.current = session
     session.start()
+    reportDiagnostics({ kind: 'dock', event: 'dock-mounted' })
     return () => {
       session.stop()
       sessionRef.current = null
+      reportDiagnostics({ kind: 'dock', event: 'dock-unmounted' })
     }
   }, [])
 

@@ -28,6 +28,8 @@ import {
   PREVIEW_CLIENT_HEADER,
   PREVIEW_CLIENT_HEADER_VALUE,
   PREVIEW_SESSIONS_PATH,
+  WEBVIEW_DIAGNOSTICS_LIMIT,
+  WEBVIEW_DIAGNOSTICS_PATH,
   previewBrowserRequestOf,
   type PreviewSessionId,
 } from './preview-contract.ts'
@@ -123,6 +125,14 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     path: PREVIEW_BRIDGE_SOURCE_PATH,
     handler: bridgeSourceHandler(bridgeSource),
   }), 'dsh-web-review: /webview-bridge-source route')
+  // TEMPORARY: the browser half's state snapshots, kept for inspection while the
+  // built-in Browser attachment is verified on the real desktop client.
+  const diagnostics: { receivedAt: string; payload: unknown }[] = []
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: WEBVIEW_DIAGNOSTICS_PATH,
+    handler: diagnosticsHandler(diagnostics),
+  }), 'dsh-web-review: /webview-diagnostics route')
   ctx.on('agent/pre-step', ({ agent, messages, signal }, next) =>
     attachPendingAnnotationContext(annotations, agent, ctx.skills, signal, messages, next))
   ctx.on('session/event', (session, event) => {
@@ -485,6 +495,61 @@ function bridgeSourceHandler(source: string): (req: IncomingMessage, res: Server
       'x-content-type-options': 'nosniff',
     })
     res.end(source)
+  }
+}
+
+/**
+ * Route handler for `/webview-diagnostics`: hold the browser half's latest state
+ * snapshots so a shell without a console can be inspected from outside.
+ *
+ * POST stores one bounded snapshot (the last 8 are kept); GET returns them.
+ * @param store - process-local ring of received snapshots.
+ * @returns the route handler.
+ */
+function diagnosticsHandler(
+  store: { receivedAt: string; payload: unknown }[],
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE) {
+      res.writeHead(415, { 'cache-control': 'no-store' })
+      res.end('preview client header required')
+      return
+    }
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(store))
+      return
+    }
+    if (req.method !== 'POST') {
+      res.writeHead(405, { allow: 'GET, POST', 'cache-control': 'no-store' })
+      res.end()
+      return
+    }
+    if (!(req.headers['content-type'] ?? '').toString().toLowerCase().startsWith('application/json')) {
+      res.writeHead(415, { 'cache-control': 'no-store' })
+      res.end('application/json required')
+      return
+    }
+    let body: string | undefined
+    try {
+      body = await readRequestBody(req, WEBVIEW_DIAGNOSTICS_LIMIT)
+    } catch (error) {
+      res.writeHead(413, { 'cache-control': 'no-store' })
+      res.end(error instanceof Error ? error.message : 'snapshot too large')
+      return
+    }
+    let payload: unknown
+    try {
+      payload = body === undefined ? undefined : JSON.parse(body) as unknown
+    } catch {
+      res.writeHead(400, { 'cache-control': 'no-store' })
+      res.end('bad snapshot')
+      return
+    }
+    store.push({ receivedAt: new Date().toISOString(), payload })
+    if (store.length > 8) store.shift()
+    res.writeHead(204, { 'cache-control': 'no-store' })
+    res.end()
   }
 }
 
