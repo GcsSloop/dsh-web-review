@@ -127,7 +127,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   }), 'dsh-web-review: /webview-bridge-source route')
   // TEMPORARY: the browser half's state snapshots, kept for inspection while the
   // built-in Browser attachment is verified on the real desktop client.
-  const diagnostics: { receivedAt: string; payload: unknown }[] = []
+  const diagnostics: DiagnosticsRing = { events: [], ticks: [] }
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: WEBVIEW_DIAGNOSTICS_PATH,
@@ -171,6 +171,13 @@ function requestOrigin(req: IncomingMessage): string | undefined {
   } catch {
     return undefined
   }
+}
+
+/** Narrow one parsed JSON value to an object. */
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
 }
 
 function exactRecord(value: unknown, keys: readonly string[]): Record<string, unknown> | undefined {
@@ -506,8 +513,22 @@ function bridgeSourceHandler(source: string): (req: IncomingMessage, res: Server
  * @param store - process-local ring of received snapshots.
  * @returns the route handler.
  */
+interface DiagnosticsEntry {
+  receivedAt: string
+  payload: unknown
+}
+
+/** Diagnostics ring: lifecycle events are kept apart from the high-rate ticks. */
+interface DiagnosticsRing {
+  events: DiagnosticsEntry[]
+  ticks: DiagnosticsEntry[]
+}
+
+const DIAGNOSTICS_EVENT_LIMIT = 64
+const DIAGNOSTICS_TICK_LIMIT = 32
+
 function diagnosticsHandler(
-  store: { receivedAt: string; payload: unknown }[],
+  store: DiagnosticsRing,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE) {
@@ -546,8 +567,11 @@ function diagnosticsHandler(
       res.end('bad snapshot')
       return
     }
-    store.push({ receivedAt: new Date().toISOString(), payload })
-    if (store.length > 8) store.shift()
+    const record = recordOf(payload)
+    const kind = record?.kind === 'tick' ? 'ticks' : 'events'
+    const bucket = store[kind]
+    bucket.push({ receivedAt: new Date().toISOString(), payload })
+    if (bucket.length > (kind === 'ticks' ? DIAGNOSTICS_TICK_LIMIT : DIAGNOSTICS_EVENT_LIMIT)) bucket.shift()
     res.writeHead(204, { 'cache-control': 'no-store' })
     res.end()
   }

@@ -331,7 +331,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
     })
     sessionRef.current = session
     session.start()
-    reportDiagnostics({ kind: 'dock', event: 'dock-mounted' })
+    reportDiagnostics({ kind: 'dock', event: 'dock-mounted', sessionId: String(props.sessionId ?? '') })
     return () => {
       session.stop()
       sessionRef.current = null

@@ -535,9 +535,12 @@ describe('/webview-diagnostics (real Loader + webserver composition)', () => {
       headers: { [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE },
     })
     expect(read.status).toBe(200)
-    const stored = await read.json() as { receivedAt: string; payload: unknown }[]
-    expect(stored.length).toBeGreaterThanOrEqual(2)
-    expect(stored.at(-1)?.payload).toMatchObject({ kind: 'tick', scan: { guests: 1 } })
+    const stored = await read.json() as {
+      events: { receivedAt: string; payload: unknown }[]
+      ticks: { receivedAt: string; payload: unknown }[]
+    }
+    expect(stored.events.at(-1)?.payload).toMatchObject({ kind: 'dock', event: 'dock-mounted' })
+    expect(stored.ticks.at(-1)?.payload).toMatchObject({ kind: 'tick', scan: { guests: 1 } })
 
     // Without the plugin client header the route is not readable.
     expect((await fetch(`${origin}/webview-diagnostics`)).status).toBe(415)

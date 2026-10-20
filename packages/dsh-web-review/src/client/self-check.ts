@@ -15,7 +15,7 @@ import {
 import { scanBrowserGuests } from './webview-guest.ts'
 
 const BADGE_ID = 'dsh-web-review-selfcheck'
-const INTERVAL_MS = 500
+const INTERVAL_MS = 1000
 
 /**
  * Send one diagnostics snapshot to the node half's ring.
@@ -50,6 +50,34 @@ export function selfCheckLine(
     + ` · dock ${shape}${dock.seen ? ' · was:yes' : ''}`
 }
 
+/** Forward host and React console errors, the only trace a shell without a console can keep. */
+function captureConsole(): () => void {
+  const original = console.error
+  let forwarded = 0
+  const patched = (...args: unknown[]): void => {
+    try {
+      if (forwarded < 40) {
+        forwarded += 1
+        const text = args.map((item) => {
+          if (typeof item === 'string') return item
+          if (item instanceof Error) return `${item.name}: ${item.message}`
+          try {
+            return JSON.stringify(item)
+          } catch {
+            return String(item)
+          }
+        }).join(' ').slice(0, 900)
+        reportDiagnostics({ kind: 'console', level: 'error', text })
+      }
+    } catch {
+      // A broken diagnostic must not replace the error it is reporting.
+    }
+    original.apply(console, args)
+  }
+  console.error = patched
+  return () => { console.error = original }
+}
+
 /**
  * Install the badge and its heartbeat.
  * @returns the disposer removing both.
@@ -82,7 +110,8 @@ export function installSelfCheck(): () => void {
   let seen = false
   const tick = (): void => {
     ticks += 1
-    reportDiagnostics({ kind: 'tick', tick: ticks })
+    const composer = document.querySelector('[data-composer-seat]') !== null
+    const conversation = document.querySelectorAll('[data-conversation-region="composer"]').length
     const dock = document.querySelector('[data-webview-browser-dock]')
     const rect = dock?.getBoundingClientRect()
     if (dock !== null) seen = true
@@ -98,6 +127,8 @@ export function installSelfCheck(): () => void {
     reportDiagnostics({
       kind: 'tick',
       tick: ticks,
+      composer,
+      conversation,
       dock: shape,
       scan: {
         guests: scan.guests.length,
@@ -107,10 +138,26 @@ export function installSelfCheck(): () => void {
       },
     })
   }
+  const restoreConsole = captureConsole()
+  const onError = (event: ErrorEvent): void => {
+    reportDiagnostics({ kind: 'window-error', text: String(event.message).slice(0, 500) })
+  }
+  const onRejection = (event: PromiseRejectionEvent): void => {
+    const reason = event.reason as { message?: unknown } | undefined
+    reportDiagnostics({
+      kind: 'unhandled-rejection',
+      text: String(typeof reason?.message === 'string' ? reason.message : reason).slice(0, 500),
+    })
+  }
+  window.addEventListener('error', onError)
+  window.addEventListener('unhandledrejection', onRejection)
   tick()
   const timer = setInterval(tick, INTERVAL_MS)
   return () => {
     clearInterval(timer)
+    window.removeEventListener('error', onError)
+    window.removeEventListener('unhandledrejection', onRejection)
+    restoreConsole()
     badge.remove()
   }
 }
