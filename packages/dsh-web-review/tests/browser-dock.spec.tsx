@@ -74,6 +74,7 @@ function renderDock(options: { sync?: WebviewDockInjected['syncAnnotations'] } =
       syncAnnotations={sync}
       openPreview={vi.fn()}
       sendAnnotationsWithoutDraft={sendAnnotationsWithoutDraft}
+      awaitAnnotationAdmission={async () => false}
       sessionId={'session-1' as never}
       t={t}
     />,

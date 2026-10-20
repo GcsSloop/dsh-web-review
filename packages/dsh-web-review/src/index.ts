@@ -7,6 +7,7 @@
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-skill'
@@ -77,6 +78,8 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     order: -97,
     text: PREVIEW_GUIDANCE,
   })
+  /** Snapshot ids whose durable message the session log recorded, per session. */
+  const admittedAnnotations = new Map<SessionId, string>()
   const livePreviewServer = previewServer
   const browserSessions = BrowserPreviewSessions.create({
     bridgeSource,
@@ -112,7 +115,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     () => ctx.webServer.register({
       kind: 'exact',
       path: ANNOTATIONS_PREFIX,
-      handler: annotationsHandler(ctx, annotations),
+      handler: annotationsHandler(ctx, annotations, admittedAnnotations),
     }),
     'dsh-web-review: /webview-annotations route',
   )
@@ -138,9 +141,12 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   // a deployment without it keeps the text-only context.
   const images = ctx.get('attachments') as AnnotationImageStore | undefined
   ctx.on('agent/pre-step', ({ agent, messages, signal }, next) =>
-    attachPendingAnnotationContext(annotations, agent, ctx.skills, signal, messages, next, images))
+    attachPendingAnnotationContext(annotations, agent, ctx.skills, signal, messages, next, images, (event) => {
+      diagnostics.events.push({ receivedAt: new Date().toISOString(), payload: { kind: 'admission', ...event } })
+      if (diagnostics.events.length > DIAGNOSTICS_EVENT_LIMIT) diagnostics.events.shift()
+    }))
   ctx.on('session/event', (session, event) => {
-    acknowledgeAnnotationEvent(annotations, session.id, event)
+    acknowledgeAnnotationEvent(annotations, session.id, event, admittedAnnotations)
   })
   ctx.on('agent/disposed', ({ agent }) => { forgetAgent(annotations, agent) })
 }
@@ -591,10 +597,31 @@ function diagnosticsHandler(
 function annotationsHandler(
   ctx: Context,
   state: AnnotationCommitState,
+  admitted: Map<SessionId, string>,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
+    if (req.method === 'GET') {
+      // The dock polls this after a successful sync: only a snapshot the durable
+      // session log actually recorded may clear the annotations.
+      if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE) {
+        res.writeHead(415, { 'cache-control': 'no-store' })
+        res.end('preview client header required')
+        return
+      }
+      let sessionId = ''
+      try {
+        sessionId = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`)
+          .searchParams.get('sessionId') ?? ''
+      } catch {
+        sessionId = ''
+      }
+      const snapshotId = admitted.get(SessionId(sessionId))
+      res.writeHead(200, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(snapshotId === undefined ? {} : { snapshotId }))
+      return
+    }
     if ((req.method ?? 'GET') !== 'POST') {
-      res.writeHead(405, { allow: 'POST' })
+      res.writeHead(405, { allow: 'GET, POST' })
       res.end()
       return
     }

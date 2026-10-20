@@ -77,9 +77,17 @@ export interface AnnotationImageStore {
 async function admittedAnnotationContent(
   pending: PendingAnnotationContext,
   attachments: AnnotationImageStore | undefined,
+  observe?: (event: { images: number; attached: boolean; error?: string }) => void,
 ): Promise<UserMessage['content']> {
   const text = { type: 'text' as const, text: pending.context }
-  if (attachments === undefined || pending.images.length === 0) return [text]
+  if (pending.images.length === 0) {
+    observe?.({ images: 0, attached: false })
+    return [text]
+  }
+  if (attachments === undefined) {
+    observe?.({ images: pending.images.length, attached: false, error: 'no-attachment-store' })
+    return [text]
+  }
   try {
     const admitted = await attachments.admitPromptContent([
       text,
@@ -89,9 +97,15 @@ async function admittedAnnotationContent(
         data,
       })),
     ])
+    observe?.({ images: pending.images.length, attached: true })
     return admitted as UserMessage['content']
-  } catch {
+  } catch (error) {
     // A refused capture must not cost the annotations themselves.
+    observe?.({
+      images: pending.images.length,
+      attached: false,
+      error: error instanceof Error ? error.message.slice(0, 300) : 'admission failed',
+    })
     return [text]
   }
 }
@@ -527,6 +541,7 @@ export async function attachPendingAnnotationContext(
   claimedMessages: readonly UserMessage[],
   next: () => Promise<PreStepDecision>,
   attachments?: AnnotationImageStore,
+  observe?: (event: { images: number; attached: boolean; error?: string }) => void,
 ): Promise<PreStepDecision> {
   const decision = await next()
   if (decision.kind !== 'enter') return decision
@@ -567,7 +582,7 @@ export async function attachPendingAnnotationContext(
     // ContextInjectionRow shows the sections from this source and renders
     // the supersedes sentence as its own caption.
     source: annotationSource as unknown as UserMessage['source'],
-    content: await admittedAnnotationContent(pending, attachments),
+    content: await admittedAnnotationContent(pending, attachments, observe),
   })
   const reminder = reminders.length === 0 ? [] : [createUserMessage({
     source: ANNOTATION_SOURCE as unknown as UserMessage['source'],
@@ -584,6 +599,7 @@ export function acknowledgeAnnotationEvent(
   state: AnnotationCommitState,
   sessionId: SessionId,
   event: SessionEvent,
+  admitted?: Map<SessionId, string>,
 ): void {
   if (event.type !== 'user/message') return
   const source = event.data.source
@@ -595,6 +611,7 @@ export function acknowledgeAnnotationEvent(
   const current = state.get(sessionId)
   if (text !== undefined && current?.snapshotId === snapshotId && current.context === text) {
     state.delete(sessionId)
+    admitted?.set(sessionId, snapshotId)
   }
 }
 

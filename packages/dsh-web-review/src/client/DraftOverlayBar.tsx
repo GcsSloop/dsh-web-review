@@ -33,6 +33,13 @@ export interface WebviewDockInjected {
    * this explicit path.
    */
   sendAnnotationsWithoutDraft: (prompt: string) => Promise<void>
+  /**
+   * Wait until the durable session log recorded the snapshot.
+   *
+   * The chat view's own context row is the fast path; this is the authoritative
+   * one, and it does not depend on a host chat-node shape.
+   */
+  awaitAnnotationAdmission: (snapshotId: string) => Promise<boolean>
 }
 
 /** Full composed props: dock runtime + shared store + locale + inject. */
@@ -97,6 +104,7 @@ export function DraftOverlayBar({
   useChat,
   actions,
   syncAnnotations,
+  awaitAnnotationAdmission,
   openPreview,
   t,
   inline = false,
@@ -147,9 +155,16 @@ export function DraftOverlayBar({
       (receipt) => {
         if (revision.current !== currentRevision) return
         if (clearing) hadAnnotations.current = false
-        actions.setAnnotationSync(receipt.kind === 'ready'
-          ? { status: 'ready', snapshotId: receipt.snapshotId }
-          : { status: 'idle' })
+        if (receipt.kind !== 'ready') {
+          actions.setAnnotationSync({ status: 'idle' })
+          return
+        }
+        actions.setAnnotationSync({ status: 'ready', snapshotId: receipt.snapshotId })
+        // The node records the snapshot only when its durable message enters the
+        // session log; that is the one acknowledgement worth clearing for.
+        void awaitAnnotationAdmission(receipt.snapshotId).then(admitted => {
+          if (admitted && revision.current === currentRevision) actions.clearPicks()
+        })
       },
       () => {
         if (revision.current !== currentRevision) return

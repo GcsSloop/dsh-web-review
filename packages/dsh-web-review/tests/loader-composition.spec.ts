@@ -628,10 +628,20 @@ describe('/webview-annotations (real Loader + webserver composition)', () => {
     expect(response.status).toBe(413)
   })
 
-  it('rejects non-POST methods with 405', async () => {
+  it('answers the admitted-snapshot poll on GET and refuses a bare one', async () => {
     await loadComposition()
-    const response = await fetch(`http://127.0.0.1:${port}/webview-annotations`)
-    expect(response.status).toBe(405)
+    // The dock polls this route after a sync; without the plugin client header it
+    // must not answer, and other methods stay unsupported.
+    const bare = await fetch(`http://127.0.0.1:${port}/webview-annotations`)
+    expect(bare.status).toBe(415)
+    const polled = await fetch(
+      `http://127.0.0.1:${port}/webview-annotations?sessionId=session-1`,
+      { headers: { [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE } },
+    )
+    expect(polled.status).toBe(200)
+    expect(await polled.json()).toEqual({})
+    const put = await fetch(`http://127.0.0.1:${port}/webview-annotations`, { method: 'PUT' })
+    expect(put.status).toBe(405)
   })
 })
 

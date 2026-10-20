@@ -343,6 +343,7 @@ function renderDock(
       useChat={useChat as unknown as WebviewDockProps['useChat']}
       syncAnnotations={sync}
       openPreview={openPreview}
+      awaitAnnotationAdmission={async () => false}
       t={t}
     />,
   )

@@ -35,6 +35,7 @@ import {
   annotationSyncReceiptOf,
   type AnnotationSyncReceipt,
 } from '../annotation-contract.ts'
+import { PREVIEW_CLIENT_HEADER, PREVIEW_CLIENT_HEADER_VALUE } from '../preview-contract.ts'
 import { en, zh, type WebviewKey } from './locales.ts'
 import { createWebviewStore } from './stores.ts'
 import { AnnotationDock } from './AnnotationDock.tsx'
@@ -234,7 +235,9 @@ export function apply(ctx: ClientContext): void {
         actions.setUrl(normalized)
         actions.setTitle('')
         actions.clearPicks()
-        ctx.layout.closeDetails()
+        // 0.2.x no longer exposes the Details closer; a host without it must not
+        // break the click that opened the page.
+        ;(ctx.layout as { closeDetails?: () => void }).closeDetails?.()
         // The right Sidebar owns the preview: reveal (or open) the built-in
         // Browser tab, which navigates from the address recorded here.
         ctx.sidebarRight?.openTab('browser', { params: { url: normalized } })
@@ -248,6 +251,25 @@ export function apply(ctx: ClientContext): void {
       sendAnnotationsWithoutDraft: (prompt) => scopedConversation(ctx, sessionId).send(
         prompt.trim() === '' ? t('panel.pick.defaultPrompt') : prompt,
       ),
+      // Poll the node's admitted-snapshot record: only a message the durable
+      // session log actually kept may clear the annotations.
+      awaitAnnotationAdmission: async (snapshotId) => {
+        const query = `/webview-annotations?sessionId=${encodeURIComponent(String(sessionId))}`
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          try {
+            const response = await fetch(query, {
+              cache: 'no-store',
+              headers: { [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE },
+            })
+            if (response.ok) {
+              const value = await response.json() as { snapshotId?: unknown }
+              if (value.snapshotId === snapshotId) return true
+            }
+          } catch { /* the next attempt retries */ }
+          await new Promise(resolve => setTimeout(resolve, 800))
+        }
+        return false
+      },
     }),
   }, AnnotationDock))
 }
