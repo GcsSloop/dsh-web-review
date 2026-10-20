@@ -165,8 +165,12 @@ export function guestPageUrl(guest: WebviewGuest): string | undefined {
   }
 }
 
-/** Longest edge of one capture; larger elements are shot at a reduced scale. */
-const MAX_CAPTURE_EDGE = 1_200
+/** Longest edge of one capture; a full page is scaled down to keep the payload sane. */
+const MAX_CAPTURE_EDGE = 1_400
+/** Dimming outside the annotated region, so the target reads at a glance. */
+const SPOTLIGHT_DIM = 'rgba(0, 0, 0, 0.45)'
+/** Outline of the annotated region. */
+const SPOTLIGHT_EDGE = '#4176e6'
 
 /** One capture attempt: base64 PNG when it worked, refusal text when it did not. */
 export interface CaptureResult {
@@ -175,18 +179,20 @@ export interface CaptureResult {
 }
 
 /**
- * Capture the annotated element's rectangle as base64 PNG.
+ * Capture the whole page with the annotated element highlighted.
  *
- * The `capturePage(rect)` overload cannot be used from this renderer: Electron's
- * webview implementation needs Node's `Buffer` there, and the desktop shell runs
- * the page sandboxed (`sandbox: true`, no Node), so that call rejects with
- * "Buffer is not available for the current Context". The no-argument form works,
- * so the guest is captured whole and the element's rectangle is cropped out of it
- * with a canvas, using the page viewport to map CSS pixels onto image pixels.
+ * A full page shows where the element sits (its surrounding layout is often the
+ * point of the comment), while the rectangle itself stays at full brightness and
+ * gains an outline; everything else is dimmed. The `capturePage(rect)` overload
+ * cannot be used from this renderer: Electron's webview implementation needs
+ * Node's `Buffer` there, and the desktop shell runs the page sandboxed
+ * (`sandbox: true`, no Node), so that call rejects with "Buffer is not available
+ * for the current Context". The no-argument form works, so the guest is captured
+ * whole and the highlight is painted onto a canvas.
  * @param guest - the Browser guest owning the page.
  * @param rect - element rectangle in page CSS pixels.
  * @param viewport - the page viewport the rectangle is measured against.
- * @returns the crop, or the reason it could not be taken.
+ * @returns the marked page image, or the reason it could not be taken.
  */
 export async function captureGuestRect(
   guest: WebviewGuest,
@@ -199,19 +205,39 @@ export async function captureGuestRect(
     const image = await capture.call(guest)
     const dataUrl = image.toDataURL()
     const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob())
-    const scaleX = bitmap.width / Math.max(1, viewport.width)
-    const scaleY = bitmap.height / Math.max(1, viewport.height)
-    const sx = Math.min(bitmap.width - 1, Math.max(0, Math.floor(rect.x * scaleX)))
-    const sy = Math.min(bitmap.height - 1, Math.max(0, Math.floor(rect.y * scaleY)))
-    const sw = Math.min(bitmap.width - sx, Math.max(1, Math.ceil(rect.width * scaleX)))
-    const sh = Math.min(bitmap.height - sy, Math.max(1, Math.ceil(rect.height * scaleY)))
-    const outScale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(sw, sh))
+    const outScale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(bitmap.width, bitmap.height))
     const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(sw * outScale))
-    canvas.height = Math.max(1, Math.round(sh * outScale))
+    canvas.width = Math.max(1, Math.round(bitmap.width * outScale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * outScale))
     const context = canvas.getContext('2d')
     if (context === null) return { error: 'canvas unavailable' }
-    context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
+
+    // The page as it is.
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+
+    // Map the element rectangle from page CSS pixels onto image pixels.
+    const scaleX = canvas.width / Math.max(1, viewport.width)
+    const scaleY = canvas.height / Math.max(1, viewport.height)
+    const sx = Math.min(canvas.width - 1, Math.max(0, Math.floor(rect.x * scaleX)))
+    const sy = Math.min(canvas.height - 1, Math.max(0, Math.floor(rect.y * scaleY)))
+    const sw = Math.min(canvas.width - sx, Math.max(1, Math.ceil(rect.width * scaleX)))
+    const sh = Math.min(canvas.height - sy, Math.max(1, Math.ceil(rect.height * scaleY)))
+
+    // Dim everything, then restore the target region's own pixels: a spotlight.
+    context.fillStyle = SPOTLIGHT_DIM
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.save()
+    context.beginPath()
+    context.rect(sx, sy, sw, sh)
+    context.clip()
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    context.restore()
+
+    // Outline the region so it stays visible on a bright page.
+    context.strokeStyle = SPOTLIGHT_EDGE
+    context.lineWidth = Math.max(2, Math.round(2 * outScale))
+    context.strokeRect(sx + 1, sy + 1, Math.max(1, sw - 2), Math.max(1, sh - 2))
+
     bitmap.close()
     const encoded = canvas.toDataURL('image/png')
     const comma = encoded.indexOf(',')
