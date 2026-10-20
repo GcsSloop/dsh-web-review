@@ -26,8 +26,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-// Type-only: pulls the ui-conversation SlotMap merge (the dock entry).
-import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only: pulls the ui-conversation SlotMap merge (the dock entry) without
+// importing a value; the plugin no longer renders a page tab of its own.
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-commands/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
@@ -36,11 +37,6 @@ import {
   type AnnotationSyncReceipt,
 } from '../annotation-contract.ts'
 import { en, zh, type WebviewKey } from './locales.ts'
-import {
-  PREVIEW_TAB_KIND,
-  registerSidebarPreviewTab,
-  type PreviewTabInjected,
-} from './sidebar/PreviewTab.tsx'
 import { createWebviewStore } from './stores.ts'
 import { DraftOverlayBar, type WebviewDockInjected } from './DraftOverlayBar.tsx'
 import { normalizePreviewUrl } from './navigation-url.ts'
@@ -73,28 +69,6 @@ const SKILL_DESCRIPTION_KEYS: Record<UiSkillName, WebviewKey> = {
   'better-colors': 'editor.skills.betterColors',
   'better-interface': 'editor.skills.betterInterface',
   'interface-review': 'editor.skills.interfaceReview',
-}
-
-function isClientSessions(value: unknown): value is ISessions {
-  if (typeof value !== 'object' || value === null) return false
-  try {
-    return typeof Reflect.get(value, 'scope') === 'function'
-  } catch {
-    return false
-  }
-}
-
-/** Resolve the public conversation face through one session scope. */
-function scopedConversation(ctx: ClientContext, sessionId: SessionId): IConversation {
-  // Harness declares a host SessionStore under the same Cordis service key;
-  // verify the browser service shape before narrowing the merged type.
-  const sessions: unknown = ctx.sessions
-  if (!isClientSessions(sessions)) throw new Error('dsh-web-review: client sessions service unavailable')
-  const scope = sessions.scope(sessionId)
-  if (scope === undefined) throw new Error(`dsh-web-review: session "${sessionId}" resolved no scope`)
-  const conversation = scope.get('conversation')
-  if (conversation === undefined) throw new Error('dsh-web-review: conversation service unavailable through session scope')
-  return conversation
 }
 
 /** Replace the active composer draft with one explicit Skill invocation. */
@@ -171,7 +145,6 @@ export function makeSyncAnnotations(sessionId: SessionId): WebviewDockInjected['
 }
 
 export { createPreviewSession, releasePreviewSessions } from './preview-session.ts'
-import { createPreviewSession, releasePreviewSessions } from './preview-session.ts'
 
 /** The plugin body: dictionaries and the two shared-store registrations. */
 export function apply(ctx: ClientContext): void {
@@ -187,15 +160,11 @@ export function apply(ctx: ClientContext): void {
   // preview tab and the annotation dock share one pick list).
   const webviewStore = createWebviewStore()
 
-  // Optional right-Sidebar home: registered only when the host is mounted.
-  registerSidebarPreviewTab(ctx, t, {
-    store: webviewStore,
-    inject: (sessionId: SessionId): PreviewTabInjected => ({
-      sendAnnotationsWithoutDraft: () => scopedConversation(ctx, sessionId).send(t('panel.pick.defaultPrompt')),
-      createPreviewSession,
-      releasePreviewSessions,
-    }),
-  })
+  // The right Sidebar's built-in Browser is the preview home now. This plugin
+  // deliberately registers no page tab of its own any more: the annotation
+  // surface attaches to the Browser's guest webview instead, and every entry
+  // point (assistant links, the dock's open action) reveals that tab.
+  void webviewStore
 
   ctx.inject(['commandUi'], (scope: ClientContext) => {
     scope.effect(() => scope.commandUi.register({
@@ -232,9 +201,9 @@ export function apply(ctx: ClientContext): void {
         actions.setTitle('')
         actions.clearPicks()
         ctx.layout.closeDetails()
-        // The right Sidebar owns the preview: this reveals (or opens) its page
-        // tab, which navigates from the address recorded here.
-        ctx.sidebarRight?.openTab(PREVIEW_TAB_KIND, { params: { url: normalized } })
+        // The right Sidebar owns the preview: reveal (or open) the built-in
+        // Browser tab, which navigates from the address recorded here.
+        ctx.sidebarRight?.openTab('browser', { params: { url: normalized } })
       },
     }),
   }, DraftOverlayBar))
