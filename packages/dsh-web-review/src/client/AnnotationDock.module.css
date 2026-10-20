@@ -1,0 +1,159 @@
+/*
+ * Composer dock for the built-in Browser annotation loop.
+ *
+ * The dock lives in the composer column: the row shares one line with the
+ * acknowledged capsule, and the host editor opens as a sheet above the composer
+ * so the page column keeps its full height.
+ */
+.dock,
+.dock *,
+.dock *::before,
+.dock *::after {
+  box-sizing: border-box;
+}
+
+.dock {
+  position: relative;
+  z-index: 4;
+  flex: none;
+  width: calc(
+    100% -
+    var(--dsh-composer-side-clearance) -
+    var(--dsh-composer-side-clearance) -
+    var(--dsh-composer-dock-inset) -
+    var(--dsh-composer-dock-inset) -
+    var(--dsh-composer-dock-inset) -
+    var(--dsh-composer-dock-inset)
+  );
+  max-width: calc(var(--dsh-composer-card-max-width) - 4 * var(--dsh-composer-dock-inset));
+  margin: 0 auto;
+  font-family: Inter, var(--dsw-font-family, system-ui, sans-serif);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.entry,
+.icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  gap: 6px;
+  border: 1px solid var(--dsw-alias-border-l1, rgb(0 0 0 / 8%));
+  border-radius: 999px;
+  background: var(--dsw-specific-tip, #f7f8fa);
+  color: var(--dsw-alias-label-secondary, #4b4f57);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.entry:hover,
+.icon:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, rgb(38 49 72 / 6%));
+  color: var(--dsw-alias-label-primary, #17191c);
+}
+
+.entry:focus-visible,
+.icon:focus-visible,
+.send:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-tertiary, #61666b);
+  outline-offset: -2px;
+}
+
+.entryActive {
+  border-color: var(--dsw-alias-state-business-primary, #4176e6);
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+}
+
+.icon {
+  width: 28px;
+  padding: 0;
+}
+
+.icon:disabled {
+  color: var(--dsw-alias-label-quaternary, #b8bcc2);
+  cursor: default;
+}
+
+.url {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-caption, #a0a4ab);
+  font: 11px/16px var(--ds-font-family-code, ui-monospace, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-business-primary, #4176e6);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.send:disabled {
+  background: var(--dsw-alias-bg-module-platform, #eceded);
+  color: var(--dsw-alias-label-quaternary, #b8bcc2);
+  cursor: default;
+}
+
+.count {
+  opacity: 0.8;
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 8%, transparent);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.errorIcon {
+  flex: none;
+}
+
+.error span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The host editor floats above the composer row and never reflows the chat. */
+.sheet {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-base, #fff);
+  box-shadow:
+    0 18px 44px rgb(15 23 42 / 18%),
+    0 3px 10px rgb(15 23 42 / 10%);
+}

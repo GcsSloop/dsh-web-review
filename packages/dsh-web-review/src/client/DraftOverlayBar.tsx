@@ -27,6 +27,12 @@ import css from './DraftOverlayBar.module.css'
 export interface WebviewDockInjected {
   syncAnnotations: (snapshot: AnnotationDraft) => Promise<AnnotationSyncReceipt>
   openPreview: (url: string) => void
+  /**
+   * Ask the agent to act on the acknowledged snapshot when the composer draft is
+   * empty; the stock input machine rejects an empty submit, so the dock needs
+   * this explicit path.
+   */
+  sendAnnotationsWithoutDraft: () => Promise<void>
 }
 
 /** Full composed props: dock runtime + shared store + locale + inject. */
@@ -35,6 +41,14 @@ export type WebviewDockProps =
   & PropsStore<WebviewStore>
   & PropsLocale<'webview'>
   & WebviewDockInjected
+
+/**
+ * Render only the capsule, so a parent dock row can share one line with its own
+ * controls (the built-in Browser annotation entry and Send action).
+ */
+export interface DraftOverlayBarOptions {
+  inline?: boolean
+}
 
 function kindOf(snapshot: ElementSnapshot): string {
   return snapshot.role.trim() || snapshot.tagName.trim() || 'element'
@@ -68,7 +82,15 @@ function latestAnnotationContextIdOf(chat: unknown): ReturnType<typeof annotatio
 }
 
 /** Annotation composer capsule and hover/focus detail card. */
-export function DraftOverlayBar({ useStore, useChat, actions, syncAnnotations, openPreview, t }: WebviewDockProps) {
+export function DraftOverlayBar({
+  useStore,
+  useChat,
+  actions,
+  syncAnnotations,
+  openPreview,
+  t,
+  inline = false,
+}: WebviewDockProps & DraftOverlayBarOptions) {
   const state = useStore((s) => s)
   const latestAnnotationContextId = useChat(chat => latestAnnotationContextIdOf(chat))
   const [open, setOpen] = useState(false)
@@ -163,7 +185,12 @@ export function DraftOverlayBar({ useStore, useChat, actions, syncAnnotations, o
       : t('dock.synced')
 
   return (
-    <div className={css.dock} data-webview-ui data-webview-annotations="">
+    <div
+      className={inline ? css.inline : css.dock}
+      data-webview-ui
+      data-webview-annotations=""
+      {...(inline ? { 'data-webview-annotations-inline': '' } : {})}
+    >
       <div
         className={css.anchor}
         onMouseEnter={() => { if (!clearing) setOpen(true) }}

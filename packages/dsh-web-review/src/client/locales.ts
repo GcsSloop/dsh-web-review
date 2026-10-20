@@ -6,6 +6,12 @@
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
   'command.skills.description': '选择一个 UI 优化 Skill',
+  'dock.annotate': '批注页面',
+  'dock.annotate.resume': '继续批注',
+  'dock.annotate.off': '退出批注',
+  'dock.page.missing': '未找到可批注的浏览器页面，请先在右侧打开网页',
+  'dock.bridge.injectFailed': '无法在该页面注入批注脚本，请刷新页面后重试',
+  'dock.bridge.unavailable': '页面批注通道无响应，请重试',
   'dock.count': '{count} 条注释',
   'dock.details': '注释上下文',
   'dock.focus': '定位第 {index} 条注释：{target}',
@@ -176,6 +182,12 @@ export const zh = {
 /** English dictionary (same keys as {@link zh}). */
 export const en: Record<WebviewKey, string> = {
   'command.skills.description': 'Choose one UI optimization Skill',
+  'dock.annotate': 'Annotate page',
+  'dock.annotate.resume': 'Resume annotating',
+  'dock.annotate.off': 'Exit annotating',
+  'dock.page.missing': 'No Browser page to annotate. Open a page in the right sidebar first.',
+  'dock.bridge.injectFailed': 'Could not install the annotation script in this page. Reload it and try again.',
+  'dock.bridge.unavailable': 'The page annotation channel did not answer. Try again.',
   'dock.count': '{count} comments',
   'dock.details': 'Comment context',
   'dock.focus': 'Locate comment {index}: {target}',

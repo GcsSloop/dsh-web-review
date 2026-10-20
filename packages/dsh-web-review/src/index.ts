@@ -24,6 +24,7 @@ import { PREVIEW_GUIDANCE } from './preview-guidance.ts'
 import {
   PREVIEW_BROWSER_INPUT_PATH,
   PREVIEW_BROWSER_STREAM_PATH,
+  PREVIEW_BRIDGE_SOURCE_PATH,
   PREVIEW_CLIENT_HEADER,
   PREVIEW_CLIENT_HEADER_VALUE,
   PREVIEW_SESSIONS_PATH,
@@ -117,6 +118,11 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     path: OPEN_EXTERNAL_PATH,
     handler: openExternalHandler(),
   }), 'dsh-web-review: /webview-open-external route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: PREVIEW_BRIDGE_SOURCE_PATH,
+    handler: bridgeSourceHandler(bridgeSource),
+  }), 'dsh-web-review: /webview-bridge-source route')
   ctx.on('agent/pre-step', ({ agent, messages, signal }, next) =>
     attachPendingAnnotationContext(annotations, agent, ctx.skills, signal, messages, next))
   ctx.on('session/event', (session, event) => {
@@ -444,6 +450,41 @@ function openExternalHandler(): (req: IncomingMessage, res: ServerResponse) => P
     }
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
     res.end(JSON.stringify({ ok: opened }))
+  }
+}
+
+/**
+ * Route handler for `/webview-bridge-source`: hand the built bridge artifact to
+ * this plugin's browser half.
+ *
+ * The desktop client's built-in Browser is an Electron `<webview>`: its guest is
+ * a real HTTP(S) Origin the plugin cannot rewrite, and it has no preload, so the
+ * only way to install the picker is to inject the artifact with
+ * `executeJavaScript`. The artifact already ships to every isolated preview
+ * frame, so this route exposes no secret — but it stays behind the plugin client
+ * header so an arbitrary page cannot pull it from the DSH host Origin as if it
+ * were a public asset.
+ * @param source - the built `lib/bridge.js` text, loaded once at apply.
+ * @returns the route handler.
+ */
+function bridgeSourceHandler(source: string): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req, res) => {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { allow: 'GET', 'cache-control': 'no-store' })
+      res.end()
+      return
+    }
+    if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE) {
+      res.writeHead(415, { 'cache-control': 'no-store' })
+      res.end('preview client header required')
+      return
+    }
+    res.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-type': 'text/javascript; charset=utf-8',
+      'x-content-type-options': 'nosniff',
+    })
+    res.end(source)
   }
 }
 

@@ -62,6 +62,13 @@ interface BridgeConfig {
 declare global {
   interface Window {
     __DSH_WEB_REVIEW_BRIDGE_CONFIG__?: unknown
+    /**
+     * Host-installed queue when a built-in Browser `<webview>` drives this page.
+     *
+     * The desktop client's guest has no preload and no reachable parent window,
+     * so the host installs this object and drains it with `executeJavaScript`.
+     */
+    __DSH_WEB_REVIEW_WEBVIEW_SINK__?: unknown
   }
 }
 
@@ -208,9 +215,20 @@ function targetOf(element: Element): PreviewElementTarget {
  * script message handler (the only channel an HTTPS page may use, because WebKit
  * blocks an insecure loopback request from a secure document) and falls back to
  * the loopback endpoint for the HTTP case.
+ *
+ * The desktop client's built-in Browser is an Electron `<webview>` guest with no
+ * preload and no reachable parent: the host installs a queue object and drains
+ * it, so that sink wins over every other transport.
  */
 function deliver(message: PreviewFrameEventMessage | PreviewFrameResponseMessage): void {
   const payload = JSON.stringify(message)
+  const sink = webviewSink()
+  if (sink !== undefined) {
+    try {
+      sink.push(payload)
+      return
+    } catch { /* a broken sink falls back to the page transports below */ }
+  }
   const send = (window as unknown as { __dshWebReviewSend?: unknown }).__dshWebReviewSend
   if (typeof send === 'function') {
     (send as (payload: string) => void)(payload)
@@ -225,6 +243,21 @@ function deliver(message: PreviewFrameEventMessage | PreviewFrameResponseMessage
     return
   }
   Reflect.apply(nativePostMessage, parent, [message, config.parentOrigin])
+}
+
+/**
+ * The host-installed queue of a built-in Browser guest, when one is present.
+ *
+ * The host drains it with `executeJavaScript`, so this direction needs no
+ * page-owned event source and keeps working when the page replaces `console`
+ * or has no parent window to post to.
+ */
+function webviewSink(): { push: (payload: string) => void } | undefined {
+  const value = window.__DSH_WEB_REVIEW_WEBVIEW_SINK__
+  if (typeof value !== 'object' || value === null) return undefined
+  const push = (value as { push?: unknown }).push
+  if (typeof push !== 'function') return undefined
+  return { push: (payload: string) => { Reflect.apply(push, value, [payload]) } }
 }
 
 /** The handler name the native bootstrap published, when it published one. */
@@ -814,10 +847,15 @@ function receiveHostMessage(value: unknown): void {
   }
 }
 
-window.addEventListener('message', (event) => {
-  if (event.source !== parent || event.origin !== config.parentOrigin) return
-  receiveHostMessage(event.data)
-})
+// A built-in Browser guest has no parent to receive from: its host calls the
+// receiver global instead, and a page-level `window.postMessage` would only let
+// the page address a bridge it already owns.
+if (webviewSink() === undefined) {
+  window.addEventListener('message', (event) => {
+    if (event.source !== parent || event.origin !== config.parentOrigin) return
+    receiveHostMessage(event.data)
+  })
+}
 
 // The host drives a real browser through CDP evaluation, which calls this
 // global with the JSON-encoded host message.

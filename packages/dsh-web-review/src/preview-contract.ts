@@ -94,6 +94,16 @@ export const PREVIEW_NAVIGATE_PREFIX = `${PREVIEW_RESERVED_PREFIX}/navigate/`
 export const PREVIEW_BROWSER_STREAM_PATH = '/webview-browser-stream'
 /** Input and command channel of one browser-backed preview session. */
 export const PREVIEW_BROWSER_INPUT_PATH = '/webview-browser-input'
+/**
+ * Same-origin source of the built bridge IIFE.
+ *
+ * The isolated transports serve the bridge inside their own random Origin. The
+ * desktop client's built-in Browser is an Electron `<webview>` whose guest is
+ * neither same-origin with DSH nor injectable through a server response, so the
+ * client fetches the exact built artifact once and injects it through
+ * `executeJavaScript` instead.
+ */
+export const PREVIEW_BRIDGE_SOURCE_PATH = '/webview-bridge-source'
 
 declare const previewSessionIdBrand: unique symbol
 declare const previewChannelBrand: unique symbol

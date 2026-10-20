@@ -1,22 +1,20 @@
 /**
- * dsh-web-review browser half: the preview page tab in the right Sidebar — the
- * isolated Preview transport, its exact-Origin bridge, the picker and the host
- * annotation editor — and the "注释" dock above the composer, sharing one
- * webview store instance. Structured annotation snapshots commit immediately to
- * the node half's `/webview-annotations` route as pending state, then become
- * separately logged plugin context only when the stock composer prompt is
- * admitted.
+ * dsh-web-review browser half: element annotation on the host's own Browser.
  *
- * Composition: one registration into the right Sidebar's keyed
- * `sidebar.right.pane.tab` seat (through the host's `sidebarRightTabs` type
- * registry) plus the 'conversation.input.dock' annotation strip
- * (id 'webview-annotations', order 15), both declaring the SAME
- * apply-constructed store handle, so the framework resolves one instance per
- * session: the preview tab and the dock share one pick list (ui-conversation's
- * chatStore multi-registration pattern). The dock immediately prepares each
- * full structured snapshot on the node face; pre-step admission later appends it
- * to the accepted message batch. The inject face stays thin: one serialized,
- * acknowledged per-session annotation sync.
+ * The plugin owns no preview surface any more. The desktop client's built-in
+ * Browser (an Electron `<webview>` guest) loads the page, and this plugin only
+ * attaches its picker to that guest on demand, draws the host annotation
+ * editor, and turns the picked elements into structured snapshots. The node
+ * half still owns `/webview-annotations` (pending state) and serves the built
+ * bridge artifact for injection; on the desktop it starts no preview session at
+ * all for this path.
+ *
+ * Composition: one `conversation.input.dock` entry (id `webview-annotations`,
+ * order 15) declaring the apply-constructed store handle. The dock row carries
+ * the annotate entry, the acknowledged capsule, and Send; the editor opens as a
+ * sheet above the composer. Admission of the acknowledged snapshot is unchanged:
+ * the dock prepares it on the node face and `agent/pre-step` appends it to the
+ * accepted message batch.
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -27,8 +25,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the dock entry) without
-// importing a value; the plugin no longer renders a page tab of its own.
+// importing a value; the annotation surface rides the host's own Browser.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-commands/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
@@ -38,13 +37,14 @@ import {
 } from '../annotation-contract.ts'
 import { en, zh, type WebviewKey } from './locales.ts'
 import { createWebviewStore } from './stores.ts'
-import { DraftOverlayBar, type WebviewDockInjected } from './DraftOverlayBar.tsx'
+import { AnnotationDock } from './AnnotationDock.tsx'
+import { type WebviewDockInjected } from './DraftOverlayBar.tsx'
 import { normalizePreviewUrl } from './navigation-url.ts'
 import { isUiSkillName, UI_SKILLS, type UiSkillName } from '../ui-skills.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** The webview preview tab and annotation dock copy. */
+    /** The Browser annotation dock, capsule, and editor copy. */
     webview: WebviewKey
   }
   interface SlotMap {
@@ -71,6 +71,28 @@ const SKILL_DESCRIPTION_KEYS: Record<UiSkillName, WebviewKey> = {
   'interface-review': 'editor.skills.interfaceReview',
 }
 
+function isClientSessions(value: unknown): value is ISessions {
+  if (typeof value !== 'object' || value === null) return false
+  try {
+    return typeof Reflect.get(value, 'scope') === 'function'
+  } catch {
+    return false
+  }
+}
+
+/** Resolve the public conversation face through one session scope. */
+function scopedConversation(ctx: ClientContext, sessionId: SessionId): IConversation {
+  // Harness declares a host SessionStore under the same Cordis service key;
+  // verify the browser service shape before narrowing the merged type.
+  const sessions: unknown = ctx.sessions
+  if (!isClientSessions(sessions)) throw new Error('dsh-web-review: client sessions service unavailable')
+  const scope = sessions.scope(sessionId)
+  if (scope === undefined) throw new Error(`dsh-web-review: session "${sessionId}" resolved no scope`)
+  const conversation = scope.get('conversation')
+  if (conversation === undefined) throw new Error('dsh-web-review: conversation service unavailable through session scope')
+  return conversation
+}
+
 /** Replace the active composer draft with one explicit Skill invocation. */
 export function setUiSkillDraft(ctx: Pick<ClientContext, 'sessions'>, sessionId: SessionId, name: string): void {
   if (!isUiSkillName(name)) throw new Error(`unknown UI optimization Skill "${name}"`)
@@ -81,7 +103,6 @@ export function setUiSkillDraft(ctx: Pick<ClientContext, 'sessions'>, sessionId:
   if (conversation === undefined) throw new Error('dsh-web-review: conversation service unavailable through session scope')
   conversation.input.for(sessionScope).setDraft(`/${name}`)
 }
-
 /**
  * Build one per-session annotation sync. Requests are queued in change order,
  * identical queued/acknowledged snapshots are deduplicated, and the returned
@@ -155,15 +176,15 @@ export function apply(ctx: ClientContext): void {
   // re-registration; components read the standard `t` seat instead.
   const t = ctx.locale.bind(NS)
 
-  // Apply-time construction keeps store identity bound to this fiber; both
-  // registrations declare the same handle (one instance per session — the
-  // preview tab and the annotation dock share one pick list).
+  // Apply-time construction keeps store identity bound to this fiber; the dock
+  // entry declares this one handle, so the shared pick list has one instance per
+  // session.
   const webviewStore = createWebviewStore()
 
   // The right Sidebar's built-in Browser is the preview home now. This plugin
-  // deliberately registers no page tab of its own any more: the annotation
-  // surface attaches to the Browser's guest webview instead, and every entry
-  // point (assistant links, the dock's open action) reveals that tab.
+  // deliberately registers no page tab of its own: the annotation surface
+  // attaches to the Browser's guest webview instead, and every entry point
+  // (assistant links, the dock's open action) reveals that tab.
   void webviewStore
 
   ctx.inject(['commandUi'], (scope: ClientContext) => {
@@ -205,6 +226,11 @@ export function apply(ctx: ClientContext): void {
         // Browser tab, which navigates from the address recorded here.
         ctx.sidebarRight?.openTab('browser', { params: { url: normalized } })
       },
+      // The stock input machine rejects an empty submit, so annotations without
+      // a draft ask the session directly; a non-empty draft instead goes through
+      // the composer's own submit action, which keeps serialization and queueing
+      // stock behavior.
+      sendAnnotationsWithoutDraft: () => scopedConversation(ctx, sessionId).send(t('panel.pick.defaultPrompt')),
     }),
-  }, DraftOverlayBar))
+  }, AnnotationDock))
 }

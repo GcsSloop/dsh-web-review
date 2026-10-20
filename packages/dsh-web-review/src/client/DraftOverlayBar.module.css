@@ -29,6 +29,14 @@
   max-width: 100%;
 }
 
+/*
+ * Composed into a parent dock row (the built-in Browser annotation entry and
+ * Send action share the line), so the wrapper contributes no box of its own.
+ */
+.inline {
+  display: contents;
+}
+
 .capsule {
   display: inline-flex;
   align-items: center;
