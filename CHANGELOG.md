@@ -5,6 +5,42 @@ All notable changes to `dsh-web-review` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-21
+
+### Added
+
+- **client:** shoot the whole page and spotlight the target
+- **client:** stage the captures as the user's own message images
+- carry the annotations and their captures into the conversation
+- **client:** keep the dock visible and explain its state
+- **client:** annotate the desktop client's built-in Browser
+
+### Changed
+
+- **client:** drop the plugin's own preview tab and reveal the built-in Browser
+
+### Fixed
+
+- **client:** keep the Send action inside the composer column
+- **context:** a capture is not a duplicate snapshot
+- **client:** capture the guest whole and crop it
+- clear annotations on the node's record and probe the capture
+- **context:** write the v4 producer source kind
+- **bridge:** outline a container-shaped selection
+- **client:** ship the plugin's own icons instead of the host's
+
+### Internal
+
+- retire the diagnostics scaffolding and the dead preview tab
+- record the pass-3 acceptance and the fixed defects
+- keep lifecycle events and forward console errors
+- give the browser half a readable state channel
+- **client:** report dock and Browser-frame counts outside React
+- record the first acceptance pass and the visibility build
+- record the desktop profile symlink install state
+- record the Electron mechanism smoke result
+- archive the handoff for wiring annotation into the built-in Browser
+
 ## [1.0.3] - 2026-09-18
 
 ### Internal
@@ -260,6 +296,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add visual web review workflow
 - TypeScript-only repo, e2e suite, git hooks and quality gates
 
+[1.1.0]: https://github.com/GcsSloop/dsh-web-review/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/GcsSloop/dsh-web-review/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/GcsSloop/dsh-web-review/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/GcsSloop/dsh-web-review/compare/v1.0.0...v1.0.1
