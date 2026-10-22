@@ -541,6 +541,34 @@ describe('AnnotationEditor', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('treats Enter as a newline and commits only through the confirm button', () => {
+    const { frame, element } = fixture()
+    const confirm = vi.fn()
+    render(
+      <AnnotationEditor
+        id="p1"
+        patch={createLivePatch(element)}
+        frame={frame}
+        comment=""
+        changes={[]}
+        textChange={null}
+        t={t}
+        onCancel={vi.fn()}
+        onConfirm={confirm}
+        onSelectElement={vi.fn()}
+      />,
+    )
+    const field = screen.getByPlaceholderText(zh['editor.comment'])
+    fireEvent.change(field, { target: { value: 'first line' } })
+    fireEvent.keyDown(field, { key: 'Enter', code: 'Enter' })
+    expect(confirm).not.toHaveBeenCalled()
+
+    fireEvent.change(field, { target: { value: 'first line\nsecond line' } })
+    fireEvent.click(screen.getByLabelText(zh['editor.confirm']))
+    expect(confirm).toHaveBeenCalledOnce()
+    expect((confirm.mock.calls[0]?.[0] as { comment: string }).comment).toBe('first line\nsecond line')
+  })
+
   it('shows a dedicated handle only when expanded and supports drag cancellation', () => {
     const { frame, element } = fixture()
     Object.defineProperties(frame, {

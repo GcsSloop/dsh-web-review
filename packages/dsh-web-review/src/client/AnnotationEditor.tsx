@@ -248,7 +248,7 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
   const normalStyleRef = useRef('normal')
   const [, forcePosition] = useState(0)
   const editorRef = useRef<HTMLDivElement | null>(null)
-  const commentInputRef = useRef<HTMLInputElement | null>(null)
+  const commentInputRef = useRef<HTMLTextAreaElement | null>(null)
   const pendingInitialFocus = useRef(initialFocus)
   const visibleToggleRef = useRef<HTMLButtonElement | null>(null)
   const hiddenToggleRef = useRef<HTMLButtonElement | null>(null)
@@ -702,10 +702,11 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
           <button type="button" className={mode === 'adjust' ? `${css.adjust} ${css.adjustActive}` : css.adjust} aria-label={t('editor.adjust')} title={t('editor.adjust')} aria-expanded={mode === 'adjust'} onClick={() => { changeMode(value => value === 'adjust' ? 'collapsed' : 'adjust') }}>
             <AdjustIcon />
           </button>
-          <input
+          <textarea
             ref={commentInputRef}
             className={`${css.commentInput} dsh-wv-comment-input`}
             value={comment}
+            rows={1}
             maxLength={ANNOTATION_LIMITS.comment}
             placeholder={t('editor.comment')}
             onChange={(event) => {
@@ -715,7 +716,8 @@ export function AnnotationEditor(props: AnnotationEditorProps) {
             }}
             onKeyDown={(event) => {
               if (event.key === 'Escape') { event.preventDefault(); if (mode === 'select') changeMode('collapsed'); else cancel() }
-              if (event.key === 'Enter') { event.preventDefault(); confirm(event.currentTarget.value) }
+              // Enter is a newline here: only the confirm button commits, so a
+              // multi-line comment can be written without losing it.
             }}
           />
           {mode !== 'collapsed' && !docked && (
