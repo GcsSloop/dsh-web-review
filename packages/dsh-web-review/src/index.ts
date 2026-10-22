@@ -125,7 +125,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: PREVIEW_BRIDGE_SOURCE_PATH,
-    handler: bridgeSourceHandler(bridgeSource),
+    handler: bridgeSourceHandler(bridgeSource, readBridgeSource),
   }), 'dsh-web-review: /webview-bridge-source route')
   // The host's attachment store turns each capture into a durable image block;
   // a deployment without it keeps the text-only context.
@@ -474,8 +474,19 @@ function openExternalHandler(): (req: IncomingMessage, res: ServerResponse) => P
  * @param source - the built `lib/bridge.js` text, loaded once at apply.
  * @returns the route handler.
  */
-function bridgeSourceHandler(source: string): (req: IncomingMessage, res: ServerResponse) => void {
-  return (req, res) => {
+/**
+ * Serve the bridge build that is on disk right now.
+ *
+ * The source used to be read once at apply, so a rebuilt bridge only reached
+ * pages after a full client restart — a page reload fetched the stale copy from
+ * this very handler. It is read per request now (tens of kilobytes, a few
+ * requests per session), falling back to the startup copy if the read fails.
+ */
+function bridgeSourceHandler(
+  source: string,
+  read: () => Promise<string>,
+): (req: IncomingMessage, res: ServerResponse) => void {
+  return async (req, res) => {
     if (req.method !== 'GET') {
       res.writeHead(405, { allow: 'GET', 'cache-control': 'no-store' })
       res.end()
@@ -486,12 +497,18 @@ function bridgeSourceHandler(source: string): (req: IncomingMessage, res: Server
       res.end('preview client header required')
       return
     }
+    let body = source
+    try {
+      body = await read()
+    } catch {
+      // Keep serving the startup build rather than breaking the injection.
+    }
     res.writeHead(200, {
       'cache-control': 'no-store',
       'content-type': 'text/javascript; charset=utf-8',
       'x-content-type-options': 'nosniff',
     })
-    res.end(source)
+    res.end(body)
   }
 }
 
