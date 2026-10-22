@@ -63,6 +63,14 @@ export interface DraftOverlayBarOptions {
   inline?: boolean
   /** Element captures keyed by pick id; rides the injected body as a comment image. */
   screenshots?: ReadonlyMap<string, string>
+  /**
+   * Hide the capsule while its annotations are in flight.
+   *
+   * Sending must feel immediate, but the pick list stays in the store until the
+   * node records the message: clearing it early would sync an empty snapshot and
+   * drop the context the in-flight prompt is about to carry.
+   */
+  suppress?: boolean
 }
 
 function kindOf(snapshot: ElementSnapshot): string {
@@ -115,6 +123,7 @@ export function DraftOverlayBar({
   t,
   inline = false,
   screenshots = new Map<string, string>(),
+  suppress = false,
 }: WebviewDockProps & DraftOverlayBarOptions) {
   const state = useStore((s) => s)
   const latestAnnotationContextId = useChat(chat => latestAnnotationContextIdOf(chat))
@@ -204,6 +213,7 @@ export function DraftOverlayBar({
     : state.annotationSync.status === 'idle' && !clearing
       ? 'syncing'
       : state.annotationSync.status
+  if (suppress) return null
   if (clearing && syncStatus !== 'syncing' && syncStatus !== 'error') return null
 
   const count = state.picks.length

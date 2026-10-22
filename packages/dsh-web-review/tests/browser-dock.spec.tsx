@@ -212,6 +212,28 @@ describe('AnnotationDock', () => {
     expect(prompt).toContain('http://localhost:5173/')
   })
 
+  it('hides the annotations as soon as the send starts', async () => {
+    const guest = installFakeGuest({ url: 'http://localhost:5173/', title: 'Demo' })
+    const { store, sendAnnotationsWithoutDraft } = renderDock()
+    await armPicker(guest)
+    act(() => { guest.emit('pick', { target: fakeTargetPayload(HANDLE) }) })
+    await waitFor(() => { expect(document.querySelector('[data-webview-annotation-editor]')).not.toBeNull() })
+    fireEvent.change(screen.getByPlaceholderText(zh['editor.comment']), { target: { value: '圆角' } })
+    fireEvent.click(screen.getByLabelText(zh['editor.confirm']))
+    await waitFor(() => { expect(store.getSnapshot().picks).toHaveLength(1) })
+
+    const send = await waitFor(() => {
+      const button = document.querySelector('[data-webview-annotation-send]') as HTMLButtonElement | null
+      expect(button?.disabled).toBe(false)
+      return button as HTMLButtonElement
+    })
+    fireEvent.click(send)
+    // The capsule disappears on the click, before the host answers.
+    await waitFor(() => { expect(document.querySelector('[data-webview-annotations]')).toBeNull() })
+    expect(store.getSnapshot().picks).toHaveLength(1)
+    expect(sendAnnotationsWithoutDraft).toHaveBeenCalledTimes(1)
+  })
+
   it('reports a failure and leaves annotation mode when there is nothing to attach', async () => {
     const { store } = renderDock()
     await waitFor(() => { expect(document.querySelector('[data-webview-browser-dock]')).not.toBeNull() })

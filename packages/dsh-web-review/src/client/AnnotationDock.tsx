@@ -460,6 +460,14 @@ function AnnotationDockBody(props: WebviewDockProps) {
     setEditor(null)
   }
 
+  // A send that never acknowledges must not hide the capsule forever: the
+  // annotations come back so the user can retry.
+  useEffect(() => {
+    if (!sending) return
+    const timer = setTimeout(() => { setSending(false) }, 30_000)
+    return () => { clearTimeout(timer) }
+  }, [sending])
+
   const inputBusy = input.phase === 'adjudicating' || input.phase === 'submitting'
   const canSend = state.picks.length > 0
     && state.annotationSync.status === 'ready'
@@ -468,6 +476,9 @@ function AnnotationDockBody(props: WebviewDockProps) {
 
   const submitAnnotations = async (): Promise<void> => {
     if (!canSend) return
+    // The page-side markers go first: the review is over as soon as it is sent,
+    // while the pick list itself must survive until the node records the message.
+    sessionRef.current?.setPicks([])
     if (input.draft.trim().startsWith('/')) {
       actions.setError(t('panel.pick.slashDraft'))
       return
@@ -577,7 +588,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
             <IconTrash size={14} />
           </button>
         )}
-        <DraftOverlayBar {...props} inline screenshots={screenshots.current} />
+        <DraftOverlayBar {...props} inline screenshots={screenshots.current} suppress={sending} />
         <span className={css.scan} data-webview-annotation-scan="">{scanLabel}</span>
         {state.picks.length > 0 && (
           <button

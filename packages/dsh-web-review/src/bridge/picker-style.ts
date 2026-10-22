@@ -1,12 +1,17 @@
 /** Picker chrome injected by the isolated-frame bridge. */
 export const PICKER_STYLE = `
+/*
+ * Never paint over the element: a translucent fill replaces an opaque surface
+ * (a dialog, a card) and makes it look see-through. The outline and the separate
+ * selection box carry every bit of feedback.
+ */
 [data-dsh-wv-hover] {
   outline: 2px solid #4176e6 !important;
   outline-offset: -2px !important;
-  background-color: rgba(65, 118, 230, 0.10) !important;
 }
 [data-dsh-wv-selected] {
-  background-color: rgba(65, 118, 230, 0.10) !important;
+  outline: 2px solid #679efe !important;
+  outline-offset: -2px !important;
 }
 .dsh-wv-selection-box {
   position: fixed !important;
