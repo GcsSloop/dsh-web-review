@@ -598,9 +598,10 @@ export function acknowledgeAnnotationEvent(
   const source = event.data.source
   const snapshotId = annotationSnapshotIdOfSource(source)
   if (snapshotId === undefined) return
-  const text = event.data.content.length === 1 && event.data.content[0]?.type === 'text'
-    ? event.data.content[0].text
-    : undefined
+  // The admitted message may carry the captures as extra image blocks, so read
+  // the text block wherever it is instead of requiring a single-block message.
+  const textBlock = event.data.content.find(part => part.type === 'text')
+  const text = textBlock?.type === 'text' ? textBlock.text : undefined
   const current = state.get(sessionId)
   if (text !== undefined && current?.snapshotId === snapshotId && current.context === text) {
     state.delete(sessionId)

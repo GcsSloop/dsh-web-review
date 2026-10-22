@@ -317,7 +317,7 @@ export function apply(ctx: ClientContext): void {
               if (value.snapshotId === snapshotId) return true
             }
           } catch { /* the next attempt retries */ }
-          await new Promise(resolve => setTimeout(resolve, 800))
+          await new Promise(resolve => setTimeout(resolve, 400))
         }
         return false
       },

@@ -566,6 +566,36 @@ describe('pending annotation admission', () => {
     expect(state.has(agent.id)).toBe(false)
   })
 
+  it('acknowledges the admitted snapshot even when captures ride the message', async () => {
+    const { agent, agents } = harness()
+    const state: AnnotationCommitState = new Map()
+    const base = snapshot()
+    storeAnnotationSnapshot(agents, state, {
+      ...base,
+      comments: [{ ...base.comments[0]!, screenshot: 'iVBORw0KGgoAAAANSUhEUg==' }],
+    })
+    const admitted: Map<string, string> = new Map()
+    const userPrompt = claimedPrompt('apply the comments')
+    const decision = await attach(
+      state,
+      agent,
+      async () => ({ kind: 'enter', messages: [userPrompt] }),
+      noSelectedSkills,
+      [userPrompt],
+    )
+    if (decision.kind !== 'enter') throw new Error('expected enter')
+    const message = decision.messages[1]
+    if (message === undefined) throw new Error('missing annotation context')
+
+    // The durable message keeps the text and adds the captures as image blocks.
+    acknowledgeAnnotationEvent(state, agent.id, contextEvent({
+      ...message,
+      content: [...message.content, { type: 'image', attachmentId: 'att-1' } as never],
+    }), admitted as Parameters<typeof acknowledgeAnnotationEvent>[3])
+    expect(state.has(agent.id)).toBe(false)
+    expect(admitted.get(agent.id)).toBeDefined()
+  })
+
   it('loads a selected Skill before Browser Comments when its instructions are absent', async () => {
     const { agent, agents } = harness()
     const state: AnnotationCommitState = new Map()

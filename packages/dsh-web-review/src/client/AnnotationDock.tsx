@@ -460,6 +460,15 @@ function AnnotationDockBody(props: WebviewDockProps) {
     setEditor(null)
   }
 
+  // Leaving annotation mode when the review is over: the list only empties after
+  // a send (or an explicit clear), and the mode must not outlive it.
+  const lastPickCount = useRef(0)
+  useEffect(() => {
+    const previous = lastPickCount.current
+    lastPickCount.current = state.picks.length
+    if (previous > 0 && state.picks.length === 0 && state.pickMode) actionsRef.current.togglePickMode()
+  }, [state.picks.length, state.pickMode])
+
   // A send that never acknowledges must not hide the capsule forever: the
   // annotations come back so the user can retry.
   useEffect(() => {
