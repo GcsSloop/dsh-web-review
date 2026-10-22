@@ -450,12 +450,36 @@ function releasePageFocus(): void {
   if (focused instanceof HTMLElement && focused !== document.body) focused.blur()
 }
 
+/**
+ * Lift plugin chrome into the browser's top layer.
+ *
+ * A page may open a native `<dialog>` with `showModal()`, and the top layer paints
+ * above every stacked element: the selection box and the numbered markers would
+ * be invisible exactly on the surfaces people most want to annotate. A `popover`
+ * on the same top layer, shown later, paints above that dialog. Unsupported
+ * hosts keep the ordinary fixed positioning.
+ */
+function promoteToTopLayer(element: HTMLElement): void {
+  try {
+    const candidate = element as HTMLElement & { showPopover?: () => void }
+    if (typeof candidate.showPopover !== 'function') return
+    if (!element.hasAttribute('popover')) element.setAttribute('popover', 'manual')
+    if (!element.matches(':popover-open')) candidate.showPopover()
+  } catch {
+    // A host without the Popover API keeps the stacked element it already has.
+  }
+}
+
 function ensureSelectionBox(): HTMLDivElement {
-  if (selectionBox?.isConnected === true) return selectionBox
+  if (selectionBox?.isConnected === true) {
+    promoteToTopLayer(selectionBox)
+    return selectionBox
+  }
   selectionBox = document.createElement('div')
   selectionBox.className = 'dsh-wv-selection-box'
   selectionBox.setAttribute('aria-hidden', 'true')
   document.documentElement.appendChild(selectionBox)
+  promoteToTopLayer(selectionBox)
   return selectionBox
 }
 
@@ -637,6 +661,7 @@ function syncMarkers(markers: readonly PreviewMarker[]): void {
         postEvent({ name: 'mark-click', payload: { pickId: marker.id } })
       })
       document.documentElement.appendChild(circle)
+      promoteToTopLayer(circle)
       markerChrome.set(marker.id, { element, circle })
     } else {
       chrome.element = element
