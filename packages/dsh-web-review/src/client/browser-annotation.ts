@@ -192,11 +192,12 @@ export class BrowserAnnotationSession {
 
   /** Capture one element rectangle for the annotation review. */
   async capture(
+    cssPath: string,
     rect: { x: number; y: number; width: number; height: number },
     viewport: { width: number; height: number },
   ): Promise<{ data?: string; error?: string }> {
     const guest = this.guest
-    return guest === null ? { error: 'not attached' } : await captureGuestRect(guest, rect, viewport)
+    return guest === null ? { error: 'not attached' } : await captureGuestRect(guest, cssPath, rect, viewport)
   }
 
   /** Re-open one existing pick's element in the page. */

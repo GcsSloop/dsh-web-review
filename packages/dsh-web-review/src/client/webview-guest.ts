@@ -172,6 +172,38 @@ const SPOTLIGHT_DIM = 'rgba(0, 0, 0, 0.45)'
 /** Outline of the annotated region. */
 const SPOTLIGHT_EDGE = '#4176e6'
 
+/** Re-measure one element in the live page, in viewport coordinates. */
+async function measure(
+  guest: WebviewGuest,
+  cssPath: string,
+): Promise<{ rect: { x: number; y: number; width: number; height: number }; viewport: { width: number; height: number } } | undefined> {
+  if (cssPath === '') return undefined
+  try {
+    const value = await guest.executeJavaScript(`(() => {
+      const element = document.querySelector(${JSON.stringify(cssPath)})
+      if (element === null) return null
+      const box = element.getBoundingClientRect()
+      return {
+        rect: { x: box.left, y: box.top, width: box.width, height: box.height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }
+    })()`)
+    if (typeof value !== 'object' || value === null) return undefined
+    const record = value as { rect?: unknown; viewport?: unknown }
+    const rect = record.rect as { x?: unknown; y?: unknown; width?: unknown; height?: number } | undefined
+    const viewport = record.viewport as { width?: unknown; height?: unknown } | undefined
+    if (rect === undefined || viewport === undefined) return undefined
+    const numbers = [rect.x, rect.y, rect.width, rect.height, viewport.width, viewport.height]
+    if (numbers.some(number => typeof number !== 'number' || !Number.isFinite(number))) return undefined
+    return {
+      rect: { x: rect.x as number, y: rect.y as number, width: rect.width as number, height: rect.height as number },
+      viewport: { width: viewport.width as number, height: viewport.height as number },
+    }
+  } catch {
+    return undefined
+  }
+}
+
 /** One capture attempt: base64 PNG when it worked, refusal text when it did not. */
 export interface CaptureResult {
   data?: string
@@ -196,12 +228,20 @@ export interface CaptureResult {
  */
 export async function captureGuestRect(
   guest: WebviewGuest,
-  rect: { x: number; y: number; width: number; height: number },
-  viewport: { width: number; height: number },
+  cssPath: string,
+  fallback: { x: number; y: number; width: number; height: number },
+  fallbackViewport: { width: number; height: number },
 ): Promise<CaptureResult> {
   const capture = guest.capturePage
   if (typeof capture !== 'function') return { error: 'capturePage unavailable' }
   try {
+    // The rectangle was measured when the element was picked; a scroll between
+    // picking and confirming moves it, and a stale rectangle paints the highlight
+    // below the element (a second, misplaced box). Re-measure against the page
+    // that is on screen right now.
+    const measured = await measure(guest, cssPath)
+    const rect = measured?.rect ?? fallback
+    const viewport = measured?.viewport ?? fallbackViewport
     const image = await capture.call(guest)
     const dataUrl = image.toDataURL()
     const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob())

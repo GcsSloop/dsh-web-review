@@ -449,7 +449,7 @@ function AnnotationDockBody(props: WebviewDockProps) {
     }
     sessionRef.current?.commitEdit(current.id, current.target.handle, value.changes, value.textChange)
     const rect = current.target.rect
-    void sessionRef.current?.capture(rect, current.target.viewport).then((shot) => {
+    void sessionRef.current?.capture(current.target.snapshot.cssPath, rect, current.target.viewport).then((shot) => {
       if (shot.data === undefined) return
       if (!stateRef.current.picks.some(existing => existing.id === current.id)) return
       screenshots.current.set(current.id, shot.data)
