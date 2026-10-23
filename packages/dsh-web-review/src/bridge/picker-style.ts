@@ -18,6 +18,16 @@ export const PICKER_STYLE = `
   z-index: 2147482999 !important;
   box-sizing: border-box !important;
   pointer-events: none !important;
+  /*
+   * The chrome is a popover so it can paint above a modal <dialog> in the top
+   * layer, and the UA stylesheet centers popovers (inset: 0 + margin: auto).
+   * Without these resets the box parks itself in the middle of the viewport.
+   */
+  margin: 0 !important;
+  padding: 0 !important;
+  right: auto !important;
+  bottom: auto !important;
+  overflow: visible !important;
   border: 2px solid #679efe !important;
   border-radius: 6px !important;
   background: transparent !important;
@@ -36,6 +46,13 @@ export const PICKER_STYLE = `
   position: fixed !important;
   z-index: 2147483000 !important;
   box-sizing: border-box;
+  /* Same popover reasoning as the selection box. */
+  margin: 0 !important;
+  padding: 0 !important;
+  right: auto !important;
+  bottom: auto !important;
+  overflow: visible !important;
+  border: 0 !important;
   width: 18px;
   height: 18px;
   border-radius: 50%;
