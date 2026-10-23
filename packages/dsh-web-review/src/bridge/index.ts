@@ -927,6 +927,25 @@ if (webviewSink() === undefined) {
   } catch { /* a malformed host payload is ignored */ }
 }
 
+/**
+ * Where the selected element sits right now, in the coordinates the host
+ * captures in.
+ *
+ * The capture has to mark the very element the page is outlining: resolving a
+ * CSS path again can land on a different node (`article:nth-of-type(1)` matches
+ * any first article), and the shot then carries two boxes in two places. The
+ * bridge holds the element reference, so the host asks for it directly.
+ */
+;(window as unknown as { __dshWebReviewMeasure?: unknown }).__dshWebReviewMeasure = (): unknown => {
+  if (selected === null || !selected.isConnected) return null
+  const rect = selectionRect(selected)
+  if (rect === null) return null
+  return {
+    rect: { x: rect.left, y: rect.top, width: rect.right - rect.left, height: rect.bottom - rect.top },
+    viewport: { width: innerWidth, height: innerHeight },
+  }
+}
+
 function installPicker(): void {
   const style = document.createElement('style')
   style.dataset.dshWebReview = 'picker'

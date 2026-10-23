@@ -193,14 +193,13 @@ export class BrowserAnnotationSession {
 
   /** Capture one element rectangle for the annotation review. */
   async capture(
-    cssPath: string,
     rect: { x: number; y: number; width: number; height: number },
     viewport: { width: number; height: number },
   ): Promise<{ data?: string; error?: string }> {
     const guest = this.guest
     if (guest === null) return { error: 'not attached' }
     void reportChromeProbe(guest)
-    return await captureGuestRect(guest, cssPath, rect, viewport)
+    return await captureGuestRect(guest, rect, viewport)
   }
 
   /** Re-open one existing pick's element in the page. */

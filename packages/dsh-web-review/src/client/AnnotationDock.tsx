@@ -447,17 +447,22 @@ function AnnotationDockBody(props: WebviewDockProps) {
       textChange: value.textChange,
       viewport: value.viewport,
     }
-    sessionRef.current?.commitEdit(current.id, current.target.handle, value.changes, value.textChange)
-    const rect = current.target.rect
-    void sessionRef.current?.capture(current.target.snapshot.cssPath, rect, current.target.viewport).then((shot) => {
-      if (shot.data === undefined) return
-      if (!stateRef.current.picks.some(existing => existing.id === current.id)) return
-      screenshots.current.set(current.id, shot.data)
-      actionsRef.current.updatePick(current.id, stateRef.current.picks.find(item => item.id === current.id) ?? pick)
-    }).catch(() => undefined)
-    if (current.existing === null) actions.addPick(pick)
-    else actions.updatePick(current.id, pick)
+    // Grab the shot before the page's own outline is cleared: the picture then
+    // carries that outline, and the spotlight we paint lands on the very same
+    // rectangle instead of a second, differently-measured one. Committing after
+    // the grab keeps both in the same frame.
+    const session = sessionRef.current
     setEditor(null)
+    const commit = (): void => {
+      session?.commitEdit(current.id, current.target.handle, value.changes, value.textChange)
+      if (current.existing === null) actions.addPick(pick)
+      else actions.updatePick(current.id, pick)
+    }
+    if (session === null) { commit(); return }
+    void session.capture(current.target.rect, current.target.viewport).then((shot) => {
+      if (shot.data !== undefined) screenshots.current.set(current.id, shot.data)
+      commit()
+    }).catch(commit)
   }
 
   // Leaving annotation mode when the review is over: the list only empties after
