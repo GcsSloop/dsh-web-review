@@ -83,6 +83,11 @@ export const PREVIEW_TREE_LIMITS = {
 export const PREVIEW_SESSIONS_PATH = '/webview-preview-sessions'
 export const PREVIEW_CLIENT_HEADER = 'x-dsh-web-review-client'
 export const PREVIEW_CLIENT_HEADER_VALUE = '1'
+/** Temporary diagnostic channel for the annotation chrome; removed before release. */
+export const WEBVIEW_PROBE_PATH = '/webview-probe'
+/** One probe body is a small JSON dump, never a capture. */
+export const WEBVIEW_PROBE_LIMIT = 64 * 1024
+
 export const PREVIEW_BRIDGE_PROTOCOL = 'dsh-web-review/bridge'
 export const PREVIEW_BRIDGE_VERSION = 1
 export const PREVIEW_RESERVED_PREFIX = '/.dsh-web-review'

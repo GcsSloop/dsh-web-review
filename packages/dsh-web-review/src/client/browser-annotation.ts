@@ -36,6 +36,7 @@ import type { PickItem } from './contract.ts'
 import { PreviewBridgeClient, type PreviewReadyState } from './preview-bridge.ts'
 import {
   captureGuestRect,
+  reportChromeProbe,
   guestOnScreen,
   guestPageTitle,
   guestPageUrl,
@@ -197,7 +198,9 @@ export class BrowserAnnotationSession {
     viewport: { width: number; height: number },
   ): Promise<{ data?: string; error?: string }> {
     const guest = this.guest
-    return guest === null ? { error: 'not attached' } : await captureGuestRect(guest, cssPath, rect, viewport)
+    if (guest === null) return { error: 'not attached' }
+    void reportChromeProbe(guest)
+    return await captureGuestRect(guest, cssPath, rect, viewport)
   }
 
   /** Re-open one existing pick's element in the page. */
