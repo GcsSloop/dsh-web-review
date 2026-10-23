@@ -5,6 +5,26 @@ All notable changes to `dsh-web-review` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-10-23
+
+### Added
+
+- **editor:** Enter writes a newline, the confirm button commits
+
+### Fixed
+
+- **bridge:** stop the popover chrome from centering itself
+- mark the captured frame with the element the page is outlining
+- **client:** re-measure the target when the capture is taken
+- **context:** acknowledge a message that also carries captures
+- **node:** serve the bridge build that is on disk
+- **bridge:** lift picker chrome into the top layer
+- stop tinting the selected element and hide annotations on send
+
+### Internal
+
+- temporary chrome probe for the duplicated selection box
+
 ## [1.1.0] - 2026-10-21
 
 ### Added
@@ -296,6 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add visual web review workflow
 - TypeScript-only repo, e2e suite, git hooks and quality gates
 
+[1.1.1]: https://github.com/GcsSloop/dsh-web-review/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/GcsSloop/dsh-web-review/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/GcsSloop/dsh-web-review/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/GcsSloop/dsh-web-review/compare/v1.0.1...v1.0.2

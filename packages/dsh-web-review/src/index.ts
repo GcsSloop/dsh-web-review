@@ -30,8 +30,6 @@ import {
   PREVIEW_CLIENT_HEADER,
   PREVIEW_CLIENT_HEADER_VALUE,
   PREVIEW_SESSIONS_PATH,
-  WEBVIEW_PROBE_LIMIT,
-  WEBVIEW_PROBE_PATH,
   previewBrowserRequestOf,
   type PreviewSessionId,
 } from './preview-contract.ts'
@@ -129,41 +127,6 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     path: PREVIEW_BRIDGE_SOURCE_PATH,
     handler: bridgeSourceHandler(bridgeSource, readBridgeSource),
   }), 'dsh-web-review: /webview-bridge-source route')
-  // TEMPORARY: the annotation chrome's own dump, so a duplicated or misplaced
-  // selection box can be inspected from outside the shell (no console there).
-  const probes: unknown[] = []
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'exact',
-    path: WEBVIEW_PROBE_PATH,
-    handler: async (req, res) => {
-        if (req.headers[PREVIEW_CLIENT_HEADER] !== PREVIEW_CLIENT_HEADER_VALUE) {
-          res.writeHead(415, { 'cache-control': 'no-store' })
-          res.end()
-          return
-        }
-        if (req.method === 'GET') {
-          res.writeHead(200, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ probes: probes.slice(-8) }))
-          return
-        }
-        const body = await readRequestBody(req, WEBVIEW_PROBE_LIMIT)
-        if (body === undefined) {
-          res.writeHead(413, { 'cache-control': 'no-store' })
-          res.end()
-          return
-        }
-        try {
-          probes.push(JSON.parse(body) as unknown)
-          if (probes.length > 16) probes.shift()
-        } catch {
-          res.writeHead(400, { 'cache-control': 'no-store' })
-          res.end('invalid probe')
-          return
-        }
-      res.writeHead(204, { 'cache-control': 'no-store' })
-      res.end()
-    },
-  }), 'dsh-web-review: /webview-probe route')
   // The host's attachment store turns each capture into a durable image block;
   // a deployment without it keeps the text-only context.
   const images = ctx.get('attachments') as AnnotationImageStore | undefined

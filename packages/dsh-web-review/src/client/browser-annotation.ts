@@ -36,7 +36,6 @@ import type { PickItem } from './contract.ts'
 import { PreviewBridgeClient, type PreviewReadyState } from './preview-bridge.ts'
 import {
   captureGuestRect,
-  reportChromeProbe,
   guestOnScreen,
   guestPageTitle,
   guestPageUrl,
@@ -198,7 +197,6 @@ export class BrowserAnnotationSession {
   ): Promise<{ data?: string; error?: string }> {
     const guest = this.guest
     if (guest === null) return { error: 'not attached' }
-    void reportChromeProbe(guest)
     return await captureGuestRect(guest, rect, viewport)
   }
 

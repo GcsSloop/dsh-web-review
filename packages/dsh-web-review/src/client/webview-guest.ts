@@ -19,10 +19,8 @@
 import {
   PREVIEW_BRIDGE_PROTOCOL,
   PREVIEW_BRIDGE_VERSION,
-  WEBVIEW_PROBE_PATH,
   type PreviewChannel,
 } from '../preview-contract.ts'
-import { PREVIEW_CLIENT_HEADER, PREVIEW_CLIENT_HEADER_VALUE } from '../preview-contract.ts'
 import { isPreviewableUrl } from '../proxy-url.ts'
 import type { PreviewCarrier } from './preview-bridge.ts'
 
@@ -173,44 +171,6 @@ const MAX_CAPTURE_EDGE = 1_400
 const SPOTLIGHT_DIM = 'rgba(0, 0, 0, 0.45)'
 /** Outline of the annotated region. */
 const SPOTLIGHT_EDGE = '#4176e6'
-
-/**
- * TEMPORARY probe: what the annotation chrome looks like in the page right now.
- *
- * Selection boxes are created by the bridge and, if the bridge was installed more
- * than once, more than one exists; measuring them against the picked element is
- * the only way to tell a duplicate from a misplaced box.
- */
-export const CHROME_PROBE_SOURCE = `(() => {
-  const rectOf = (element) => {
-    const box = element.getBoundingClientRect()
-    return { left: Math.round(box.left), top: Math.round(box.top), width: Math.round(box.width), height: Math.round(box.height) }
-  }
-  return {
-    url: location.href.slice(0, 160),
-    scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
-    boxes: [...document.querySelectorAll('.dsh-wv-selection-box')].map(element => ({ ...rectOf(element), visible: element.hasAttribute('data-visible'), popover: element.getAttribute('popover') })),
-    selected: [...document.querySelectorAll('[data-dsh-wv-selected]')].map(element => ({ tag: element.tagName, cls: String(element.className).slice(0, 60), ...rectOf(element) })),
-    markers: [...document.querySelectorAll('.dsh-wv-marker')].map(element => ({ text: element.textContent, ...rectOf(element) })),
-    styles: document.querySelectorAll('style').length,
-    receivers: typeof window.__dshWebReviewReceive,
-  }
-})()`
-
-/** TEMPORARY: run the chrome probe and post it to the node half. */
-export async function reportChromeProbe(guest: WebviewGuest): Promise<void> {
-  try {
-    const dump = await guest.executeJavaScript(CHROME_PROBE_SOURCE)
-    await fetch(WEBVIEW_PROBE_PATH, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', [PREVIEW_CLIENT_HEADER]: PREVIEW_CLIENT_HEADER_VALUE },
-      body: JSON.stringify({ receivedAt: new Date().toISOString(), dump }),
-    })
-  } catch {
-    // Diagnostics must never break the capture.
-  }
-}
 
 /** Re-measure one element in the live page, in viewport coordinates. */
 async function measure(
