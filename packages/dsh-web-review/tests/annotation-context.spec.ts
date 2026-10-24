@@ -336,22 +336,31 @@ describe('annotationSections', () => {
 })
 
 describe('annotation captures', () => {
-  it('keeps one bounded capture per comment and refuses a malformed one', () => {
+  it('keeps one bounded capture per comment and drops only a bad one', () => {
     const png = 'iVBORw0KGgoAAAANSUhEUg=='
+    // Bare base64 is the older PNG-only form; it is normalised to a data URL.
     const parsed = parseAnnotationBody(JSON.stringify(snapshot({
       comments: [{ ...snapshot().comments[0]!, screenshot: png }],
     })))
-    expect(parsed?.comments[0]?.screenshot).toBe(png)
+    expect(parsed?.comments[0]?.screenshot).toBe(`data:image/png;base64,${png}`)
 
+    // A capture is decoration: a malformed or oversized one is dropped, and the
+    // comment still reaches the conversation instead of failing the whole sync.
     const malformed = parseAnnotationBody(JSON.stringify(snapshot({
       comments: [{ ...snapshot().comments[0]!, screenshot: 'not base64!!' }],
     })))
-    expect(malformed).toBeUndefined()
+    expect(malformed?.comments[0]?.comment).toBe(snapshot().comments[0]?.comment)
+    expect(malformed?.comments[0]?.screenshot).toBeUndefined()
 
     const oversized = parseAnnotationBody(JSON.stringify(snapshot({
       comments: [{ ...snapshot().comments[0]!, screenshot: 'A'.repeat(ANNOTATION_LIMITS.screenshot + 4) }],
     })))
-    expect(oversized).toBeUndefined()
+    expect(oversized?.comments[0]?.screenshot).toBeUndefined()
+
+    const jpeg = parseAnnotationBody(JSON.stringify(snapshot({
+      comments: [{ ...snapshot().comments[0]!, screenshot: `data:image/jpeg;base64,${png}` }],
+    })))
+    expect(jpeg?.comments[0]?.screenshot).toBe(`data:image/jpeg;base64,${png}`)
   })
 
   it('replaces a pending snapshot when a capture arrives without a text change', () => {

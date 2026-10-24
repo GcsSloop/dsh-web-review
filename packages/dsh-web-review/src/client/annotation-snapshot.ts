@@ -34,7 +34,11 @@ export function annotationDraft(
       title: bounded(title, ANNOTATION_LIMITS.pageTitle),
     },
     comments: picks.map(({ id, comment, snapshot, changes, textChange, viewport }) => ({
-      ...(screenshots.has(id) ? { screenshot: screenshots.get(id) as string } : {}),
+      // The wire limit is per capture; an oversized one is left out rather than
+      // failing the whole snapshot (the comment still travels).
+      ...(screenshots.has(id) && (screenshots.get(id) as string).length <= ANNOTATION_LIMITS.screenshot
+        ? { screenshot: screenshots.get(id) as string }
+        : {}),
       id: bounded(id, ANNOTATION_LIMITS.id),
       comment: exactIntent(comment, ANNOTATION_LIMITS.comment, 'comment'),
       tagName: bounded(snapshot.tagName, ANNOTATION_LIMITS.tagName),

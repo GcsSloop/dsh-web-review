@@ -202,10 +202,14 @@ async function sendWithScreenshots(
       | undefined
     if (actions === undefined) return false
     const files = shots.map((shot, index) => {
-      const binary = atob(shot)
+      const match = /^data:(image\/(?:png|jpeg));base64,(.+)$/u.exec(shot)
+      const mediaType = match?.[1] ?? 'image/png'
+      const payload = match?.[2] ?? shot
+      const binary = atob(payload)
       const bytes = new Uint8Array(binary.length)
       for (let index2 = 0; index2 < binary.length; index2 += 1) bytes[index2] = binary.charCodeAt(index2)
-      return new File([bytes], `annotation-${String(index + 1)}.png`, { type: 'image/png' })
+      const extension = mediaType === 'image/jpeg' ? 'jpg' : 'png'
+      return new File([bytes], `annotation-${String(index + 1)}.${extension}`, { type: mediaType })
     })
     const drafts = conversation.createDrafts(sessionId, files)
     if (drafts.length === 0) return false

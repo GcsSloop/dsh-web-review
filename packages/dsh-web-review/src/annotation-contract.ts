@@ -124,7 +124,10 @@ export interface AnnotationComment {
   textContent: string
   /** True when the element sits inside this plugin's own `[data-webview-ui]` chrome. */
   inToolChrome: boolean
-  /** Base64 PNG of the annotated element, when the host could capture one. */
+  /**
+   * The page shot with the annotated element marked: a `data:image/...;base64,`
+   * URL, or bare base64 for the PNG-only form older clients sent.
+   */
   screenshot?: string
   anchor: AnnotationAnchor | null
   changes: AnnotationStyleChange[]

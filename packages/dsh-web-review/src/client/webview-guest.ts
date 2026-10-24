@@ -166,7 +166,11 @@ export function guestPageUrl(guest: WebviewGuest): string | undefined {
 }
 
 /** Longest edge of one capture; a full page is scaled down to keep the payload sane. */
-const MAX_CAPTURE_EDGE = 1_400
+const MAX_CAPTURE_EDGE = 1_200
+/** Beyond this many characters of base64 a PNG is re-encoded as JPEG (maps). */
+const MAX_PNG_CHARS = 900_000
+/** JPEG quality for the fallback; plenty for a page shot. */
+const JPEG_QUALITY = 0.82
 /** Dimming outside the annotated region, so the target reads at a glance. */
 const SPOTLIGHT_DIM = 'rgba(0, 0, 0, 0.45)'
 /** Outline of the annotated region. */
@@ -270,10 +274,13 @@ export async function captureGuestRect(
     context.strokeRect(sx + 1, sy + 1, Math.max(1, sw - 2), Math.max(1, sh - 2))
 
     bitmap.close()
-    const encoded = canvas.toDataURL('image/png')
-    const comma = encoded.indexOf(',')
-    if (comma < 0) return { error: 'empty capture' }
-    return { data: encoded.slice(comma + 1) }
+    // A dense page (a map canvas) compresses poorly as PNG and the sync body then
+    // exceeds the protocol limit, which used to fail the whole annotation. JPEG
+    // keeps the shot while staying an order of magnitude smaller.
+    let encoded = canvas.toDataURL('image/png')
+    if (encoded.length > MAX_PNG_CHARS) encoded = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
+    if (!encoded.startsWith('data:image/')) return { error: 'empty capture' }
+    return { data: encoded }
   } catch (error) {
     return { error: error instanceof Error ? error.message.slice(0, 200) : 'capture failed' }
   }

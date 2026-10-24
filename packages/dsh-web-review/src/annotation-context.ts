@@ -51,11 +51,17 @@ export interface PendingAnnotationContext {
   snapshotId: AnnotationSnapshotIdType
   context: string
   /** Element captures in comment order; empty when the host could not shoot them. */
-  images: readonly string[]
+  images: readonly AnnotationImage[]
   /** Snapshot-form sections carried on the injected message source. */
   sections: readonly ContextSnapshotSection[]
   presentation: BrowserCommentsPresentation
   selectedSkills: UiSkillName[]
+}
+
+/** One admitted capture: the media type the host should store it as. */
+export interface AnnotationImage {
+  mediaType: string
+  data: string
 }
 
 /** Most captures one annotation message carries (the host caps images per message). */
@@ -83,10 +89,10 @@ async function admittedAnnotationContent(
   try {
     const admitted = await attachments.admitPromptContent([
       text,
-      ...pending.images.slice(0, MAX_ANNOTATION_IMAGES).map(data => ({
+      ...pending.images.slice(0, MAX_ANNOTATION_IMAGES).map(image => ({
         type: 'image' as const,
-        mediaType: 'image/png',
-        data,
+        mediaType: image.mediaType,
+        data: image.data,
       })),
     ])
     return admitted as UserMessage['content']
@@ -195,12 +201,22 @@ function parseViewport(value: unknown): AnnotationComment['viewport'] | undefine
 }
 
 /** One optional capture: canonical base64 PNG, bounded by the wire cap. */
-function parseScreenshot(value: unknown): string | undefined {
-  if (value === undefined) return undefined
-  if (typeof value !== 'string' || value.length === 0 || value.length > ANNOTATION_LIMITS.screenshot) {
-    return undefined
+/**
+ * One capture, as `data:image/png|jpeg;base64,…` or bare base64 PNG.
+ *
+ * A capture is optional decoration on top of the comment itself: an oversized or
+ * malformed one is dropped, and the annotation still reaches the conversation.
+ */
+function parseScreenshot(value: unknown): AnnotationImage | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  const dataUrl = /^data:(image\/(?:png|jpeg));base64,([A-Za-z\d+/]+={0,2})$/u.exec(value)
+  if (dataUrl !== null) {
+    const mediaType = dataUrl[1] as string
+    const data = dataUrl[2] as string
+    return data.length > ANNOTATION_LIMITS.screenshot ? undefined : { mediaType, data }
   }
-  return /^[A-Za-z\d+/]+={0,2}$/u.test(value) ? value : undefined
+  if (value.length > ANNOTATION_LIMITS.screenshot) return undefined
+  return /^[A-Za-z\d+/]+={0,2}$/u.test(value) ? { mediaType: 'image/png', data: value } : undefined
 }
 
 function parseComment(value: unknown): AnnotationComment | undefined {
@@ -212,8 +228,8 @@ function parseComment(value: unknown): AnnotationComment | undefined {
     'stableClasses', 'textContent', 'inToolChrome', 'anchor', 'changes', 'textChange', 'viewport',
   ]
   if (!exactKeys(record, withScreenshot ? [...requiredKeys, 'screenshot'] : requiredKeys)) return undefined
+  // A capture that cannot be admitted is dropped; the comment itself survives.
   const screenshot = parseScreenshot(record.screenshot)
-  if (withScreenshot && screenshot === undefined) return undefined
   const id = boundedString(record.id, ANNOTATION_LIMITS.id, false)
   const comment = boundedString(record.comment, ANNOTATION_LIMITS.comment)
   const tagName = boundedString(record.tagName, ANNOTATION_LIMITS.tagName, false)
@@ -249,7 +265,9 @@ function parseComment(value: unknown): AnnotationComment | undefined {
   return {
     id, comment, tagName, role, label, cssPath, fullPath, stableClasses,
     textContent, inToolChrome, anchor, changes, textChange, viewport,
-    ...(screenshot === undefined ? {} : { screenshot }),
+    ...(screenshot === undefined
+      ? {}
+      : { screenshot: `data:${screenshot.mediaType};base64,${screenshot.data}` }),
   }
 }
 
@@ -436,13 +454,17 @@ export function storeAnnotationSnapshot(
   const context = formatAnnotationContext(snapshot)
   if (context.length > MAX_ANNOTATION_CONTEXT) return { kind: 'context-too-large' }
   const sections = annotationSections(snapshot)
-  const images = snapshot.comments.flatMap(comment => (comment.screenshot === undefined ? [] : [comment.screenshot]))
+  const images = snapshot.comments.flatMap((comment) => {
+    const image = parseScreenshot(comment.screenshot)
+    return image === undefined ? [] : [image]
+  })
   // A capture does not change the rendered context, so comparing the text alone
   // would drop the image-bearing revision as a duplicate and keep the pending
   // snapshot that has no pictures.
   const sameImages = previous !== undefined
     && previous.images.length === images.length
-    && previous.images.every((image, index) => image === images[index])
+    && previous.images.every((image, index) => image.mediaType === images[index]?.mediaType
+      && image.data === images[index]?.data)
   if (
     context === previous?.context
     && sameImages
